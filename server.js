@@ -1,6 +1,6 @@
 const express = require('express');
 // สมมติว่าไฟล์เหล่านี้อยู่ในโครงสร้างโปรเจกต์เดิมของคุณ
-const { connectDB, sequelize } = require('../config/db');
+const { connectDB, sequelize } = require('./config/db');
 require('dotenv').config();
 const cors = require('cors');
 
@@ -83,8 +83,8 @@ setupDatabase();
 // C. ROUTES
 // -----------------------------------------------------------------
 
-app.use('/api/v1/schedules', require('../routes/classesScheduleRoutes'));
-app.use('/api/v1/bookings', require('../routes/classesBookingRoutes'));
+app.use('/api/v1/schedules', require('./routes/classesScheduleRoutes'));
+app.use('/api/v1/bookings', require('./routes/classesBookingRoutes'));
 
 // Route ทดสอบสถานะ Server (Health Check)
 app.get('/', (req, res) => {
