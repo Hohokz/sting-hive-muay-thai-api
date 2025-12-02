@@ -1,5 +1,5 @@
 const express = require("express");
-const { connectDB, initDB } = require("./config/db"); // ✅ ห้าม import sequelize ตรงๆ
+const { connectDB, sequelize } = require('./config/db'); // ✅ ห้าม import sequelize ตรงๆ
 require("dotenv").config();
 const cors = require("cors");
 
@@ -43,22 +43,21 @@ const setupDatabase = async () => {
     console.log("Attempting to connect to database...");
     await connectDB();
 
-    const sequelize = initDB(); // ✅ สร้างตอน runtime เท่านั้น
-
-    if (NODE_ENV === "development" || NODE_ENV === "test") {
+    if (NODE_ENV === 'development' || NODE_ENV === 'test') {
       await sequelize.sync({ alter: true });
-      console.log("✅ Database models synchronized (Development Mode).");
+      console.log("Database models synchronized (Development Mode).");
     } else {
-      console.log("✅ Database schema assumed to be up-to-date (Production Mode).");
+      console.log("Database schema assumed to be up-to-date (Production Mode).");
     }
 
     isDbConnected = true;
-    console.log("✅ Database connection successful.");
+    console.log("Database connection successful.");
   } catch (error) {
-    console.error("[DB Setup Error]", error.message);
+    console.error('[DB Setup Error]', error.message);
     isDbConnected = false;
   }
 };
+
 
 // ✅ เรียกตอน Serverless instance start
 setupDatabase();

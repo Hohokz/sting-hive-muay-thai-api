@@ -1,54 +1,32 @@
-const { Sequelize } = require("sequelize");
-require("dotenv").config();
+const { Sequelize } = require('sequelize');
+require('dotenv').config();
 
-const NODE_ENV = process.env.NODE_ENV || "development";
-const isProduction = NODE_ENV === "production";
+const NODE_ENV = process.env.NODE_ENV || 'development';
+const isProduction = NODE_ENV === 'production';
 
-let sequelize; // ✅ ยังไม่สร้างตอน require (สำคัญมาก)
-
-function initDB() {
-  if (!sequelize) {
-    sequelize = new Sequelize(
-      process.env.DB_NAME,
-      process.env.DB_USER,
-      process.env.DB_PASSWORD, // ✅ ต้องใช้ชื่อนี้บน Vercel
-      {
-        host: process.env.DB_HOST,
-        port: process.env.DB_PORT || 5432,
-        dialect: "postgres",
-        dialectOptions: isProduction
-          ? {
-              ssl: {
-                require: true,
-                rejectUnauthorized: false,
-              },
-            }
-          : {},
-        logging: NODE_ENV === "development" ? console.log : false,
-        pool: {
-          max: 5,
-          min: 0,
-          acquire: 30000,
-          idle: 10000,
-        },
-      }
-    );
+const sequelize = new Sequelize(
+  process.env.DB_NAME,
+  process.env.DB_USER,
+  process.env.DB_PASSWORD,
+  {
+    host: process.env.DB_HOST,
+    port: process.env.DB_PORT || 5432,
+    dialect: 'postgres',
+    dialectOptions: {
+      ssl: isProduction,
+      rejectUnauthorized: false
+    },
+    logging: NODE_ENV === 'development' ? console.log : false,
   }
+);
 
-  return sequelize;
-}
-
-async function connectDB() {
+const connectDB = async () => {
   try {
-    const db = initDB(); // ✅ สร้างตอน runtime เท่านั้น
-    await db.authenticate();
-    console.log(`✅ PostgreSQL connected in ${NODE_ENV} mode.`);
-  } catch (error) {
-    console.error("⚠️ DB connection failed:", error);
+    await sequelize.authenticate();
+    console.log('✅ DB Connected');
+  } catch (err) {
+    console.error('❌ DB Error:', err);
   }
-}
-
-module.exports = {
-  initDB,
-  connectDB,
 };
+
+module.exports = { sequelize, connectDB };
