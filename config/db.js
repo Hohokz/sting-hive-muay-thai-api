@@ -4,14 +4,14 @@ require("dotenv").config();
 const NODE_ENV = process.env.NODE_ENV || "development";
 const isProduction = NODE_ENV === "production";
 
-let sequelize; // ✅ ยังไม่สร้างทันที
+let sequelize; // ✅ ยังไม่สร้างตอน require (สำคัญมาก)
 
 function initDB() {
   if (!sequelize) {
     sequelize = new Sequelize(
       process.env.DB_NAME,
       process.env.DB_USER,
-      process.env.DB_PASSWORD, // ✅ ใช้ชื่อนี้ให้ตรง Vercel
+      process.env.DB_PASSWORD, // ✅ ต้องใช้ชื่อนี้บน Vercel
       {
         host: process.env.DB_HOST,
         port: process.env.DB_PORT || 5432,
@@ -40,7 +40,7 @@ function initDB() {
 
 async function connectDB() {
   try {
-    const db = initDB();
+    const db = initDB(); // ✅ สร้างตอน runtime เท่านั้น
     await db.authenticate();
     console.log(`✅ PostgreSQL connected in ${NODE_ENV} mode.`);
   } catch (error) {
