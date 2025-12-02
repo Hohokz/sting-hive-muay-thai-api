@@ -11,8 +11,8 @@ const handleServiceError = (res, error) => {
 const createBooking = async (req, res) => {
     // Validation
     const { classes_schedule_id, client_name, client_email } = req.body;
-    if (!classes_schedule_id || !client_name) {
-        return res.status(400).json({ success: false, message: "Missing required fields: schedule_id and name." });
+    if (!classes_schedule_id || !client_name || !client_email) {
+        return res.status(400).json({ success: false, message: "Missing required fields: schedule_id, name, and email." });
     }
 
     try {

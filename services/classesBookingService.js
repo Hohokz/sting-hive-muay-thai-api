@@ -5,6 +5,8 @@ const {
 } = require("../models/Associations");
 const { sequelize } = require("../config/db");
 const { Op, fn, col, literal } = require("sequelize");
+const {sendBookingConfirmationEmail} = require("../utils/emailService");
+const {getSchedulesById} = require("../services/classesScheduleService");
 
 // =================================================================
 // HELPER FUNCTIONS
@@ -54,15 +56,57 @@ const _checkAvailability = async (classes_schedule_id, transaction) => {
 
   const usedCapacity = currentBookingCount || 0;
 
-  // ✅ 4. ตรวจสอบว่าเต็มหรือยัง
-  if (usedCapacity >= capacityData.capacity) {
-    const error = new Error("This class is fully booked.");
-    error.status = 409;
-    throw error;
-  }
+  //   // ✅ 4. ตรวจสอบว่าเต็มหรือยัง
+  //   if (usedCapacity >= capacityData.capacity) {
+  //     const error = new Error("This class is fully booked.");
+  //     error.status = 409;
+  //     throw error;
+  //   }
 
   return true;
 };
+
+const sendEmailBookingConfirmation = async (client_email, client_name, is_private, date_booking, newBooking, classes_schedule_id,) => {
+  const fs = require("fs");
+    const path = require("path");
+    const schedule = await getSchedulesById(classes_schedule_id);
+    if(schedule == null){
+      const error = new Error("Schedule not found.");
+      error.status = 404;
+      throw error;
+    }
+
+    const emailTemplate = fs
+      .readFileSync(
+        path.join(__dirname, "../templates/booking-confirmation-email.html"),
+        "utf8"
+      )
+      .replace("{{client_name}}", client_name)
+      .replace("{{class_type}}", is_private ? "Private Class" : "Group Class")
+      .replace("{{date_human}}", new Date(date_booking).toDateString())
+      .replace("{{time_human}}", `${schedule.start_time} - ${schedule.end_time}`)
+      .replace("{{location}}", "Sting Club Muay Thai Gym")
+      .replace("{{trainer_name}}", "Sting Coach")
+      .replace("{{action_url}}", `http://localhost:5173/edit-booking/${newBooking.id}`)
+      .replace("{{help_url}}", `https://stinggym.com/support`)
+      .replace("{{location_map}}", `https://maps.google.com`);
+
+    // ✅ 6. ส่งอีเมล
+    if (client_email) {
+      try {
+        await sendBookingConfirmationEmail(
+          client_email,
+          "Your Muay Thai Class — Booking Confirmed 🥊",
+          emailTemplate
+        );
+      } catch (emailError) {
+        console.error(
+          "[EMAIL ERROR] Send failed but booking success:",
+          emailError
+        );
+      }
+    }
+}
 
 // =================================================================
 // CORE SERVICE FUNCTIONS
@@ -96,6 +140,7 @@ const createBooking = async (bookingData) => {
           classes_schedule_id,
           client_email,
           booking_status: { [Op.notIn]: ["CANCELED", "FAILED"] },
+          date_booking: date_booking,
         },
         transaction,
       });
@@ -124,6 +169,8 @@ const createBooking = async (bookingData) => {
     );
 
     await transaction.commit();
+    await sendEmailBookingConfirmation(client_email, client_name, is_private, date_booking, newBooking, classes_schedule_id);
+
     return newBooking;
   } catch (error) {
     await transaction.rollback();

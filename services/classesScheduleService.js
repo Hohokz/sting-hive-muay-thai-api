@@ -139,6 +139,19 @@ const createSchedule = async (scheduleData) => {
     }
 };
 
+const getSchedulesById = async (id) => {
+  if(!id){
+    const error = new Error("Schedule ID is required.");
+    error.status = 400;
+    throw error;
+  }
+  const whereCondition = { id };
+  return await ClassesSchedule.findOne({
+    where: whereCondition,
+    include: [{ model: ClassesCapacity, as: 'capacity_data' }]
+  });
+};
+
 /**
  * [READ] ดึงข้อมูล Schedule ทั้งหมด หรือตามช่วงเวลา พร้อม Capacity
  */
@@ -361,6 +374,7 @@ const deleteSchedule = async (id) => {
 module.exports = {
     createSchedule,
     getSchedules,
+    getSchedulesById,
     updateSchedule,
     deleteSchedule,
     getAvailableSchedulesByBookingDate
