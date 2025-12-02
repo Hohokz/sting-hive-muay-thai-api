@@ -1,14 +1,10 @@
 const express = require('express');
 const { connectDB, sequelize } = require('./config/db');
 require('dotenv').config();
+const cors = require('cors');
+// const helmet = require('helmet'); // สำหรับ Production Middleware ด้านความปลอดภัย
 
-// นำเข้าโมเดลและกำหนด Associations
-const models = require('./models/Associations'); 
 
-// --- SWAGGER SETUP (แบบใหม่) ---
-const swaggerUi = require('swagger-ui-express');
-// โหลดไฟล์ JSON ที่ swagger-autogen สร้างให้
-const swaggerDocument = require('./swagger-output.json'); 
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -25,9 +21,11 @@ const NODE_ENV = process.env.NODE_ENV || 'development';
 
 // 3. Body Parser: ใช้สำหรับรับข้อมูล JSON ใน Request Body
 
+app.use(cors({
+  origin: "http://localhost:5173"
+}));
 
 app.use(express.json());
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 app.use('/api/v1/schedules', require('./routes/classesScheduleRoutes'));
 app.use('/api/v1/bookings', require('./routes/classesBookingRoutes'));
 // -----------------------------------------------------------------

@@ -75,6 +75,47 @@ const getSchedules = async (req, res) => {
     }
 };
 
+const getAvailableSchedules = async (req, res) => {
+  const { date, gym_enum } = req.query;
+
+  if (!date) {
+    return res.status(400).json({
+      success: false,
+      message: "date is required (YYYY-MM-DD)"
+    });
+  }
+
+  try {
+    const data = await scheduleService.getAvailableSchedulesByBookingDate(
+      date,
+      gym_enum
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Available schedules retrieved successfully.",
+      data
+    });
+  } catch (error) {
+    // ✅ ถ้าคุณมี handleServiceError อยู่แล้ว
+    if (typeof handleServiceError === "function") {
+      return handleServiceError(res, error);
+    }
+
+    // ✅ fallback กรณีไม่มี util
+    console.error("[Controller Error] getAvailableSchedules:", error);
+
+    return res.status(error.status || 500).json({
+      success: false,
+      message: error.message || "Internal server error"
+    });
+  }
+};
+
+module.exports = {
+  getAvailableSchedules
+};
+
 // [UPDATE] PUT /api/v1/schedules/:id
 const updateSchedule = async (req, res) => {
     const { id } = req.params;
@@ -118,4 +159,5 @@ module.exports = {
     getSchedules,
     updateSchedule,
     deleteSchedule,
+    getAvailableSchedules
 };

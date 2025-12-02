@@ -8,11 +8,11 @@ const ClassesSchedule = sequelize.define('CLASSES_SCHEDULE', {
         primaryKey: true,
     },
     start_time: {
-        type: DataTypes.DATE(6),
+        type: DataTypes.TIME(6),
         allowNull: false,
     },
     end_time: {
-        type: DataTypes.DATE(6),
+        type: DataTypes.TIME(6),
         allowNull: false,
     },
     gym_enum: {

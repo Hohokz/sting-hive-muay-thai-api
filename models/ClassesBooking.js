@@ -33,6 +33,7 @@ const ClassesBooking = sequelize.define('CLASSES_BOOKING', {
     capacity: { type: DataTypes.INTEGER, allowNull: false },
     admin_note: DataTypes.TEXT,
     is_private: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+    date_booking: { type: DataTypes.DATE(6) },
     
     created_date: { type: DataTypes.DATE(6), allowNull: false, defaultValue: DataTypes.NOW },
     updated_date: { type: DataTypes.DATE(6), allowNull: false, defaultValue: DataTypes.NOW },

@@ -13,6 +13,8 @@ const scheduleController = require('../controllers/classesScheduleController');
 // ดึงข้อมูล Schedule ทั้งหมด หรือตามช่วงเวลา (start_date, end_date ใน Query params)
 router.get('/', scheduleController.getSchedules);
 
+router.get('/available', scheduleController.getAvailableSchedules);
+
 // 2. [CREATE] POST /api/v1/schedules
 // สร้าง Schedule ใหม่ พร้อม Capacity
 router.post('/', scheduleController.createSchedule);

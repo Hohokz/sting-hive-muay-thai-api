@@ -1,7 +1,7 @@
 // services/classesScheduleService.js
 
-const { ClassesSchedule, ClassesCapacity } = require('../models/Associations'); 
-const { Op } = require('sequelize'); 
+const { ClassesSchedule, ClassesCapacity, ClassesBooking } = require('../models/Associations'); 
+const { Op, Sequelize  } = require('sequelize'); 
 
 // =================================================================
 // 1. HELPER / VALIDATION FUNCTIONS
@@ -11,43 +11,79 @@ const { Op } = require('sequelize');
  * ตรวจสอบความถูกต้องพื้นฐานของช่วงเวลา (Start ก่อน End) และ Capacity
  */
 const _validateScheduleInput = (newStartTime, newEndTime, capacity) => {
-    if (newEndTime.getTime() <= newStartTime.getTime()) {
-        const error = new Error("Invalid time range: End time must be strictly after start time.");
-        error.status = 400; // Bad Request
+    // ✅ Validate format HH:mm
+    const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
+
+    if (!timeRegex.test(newStartTime) || !timeRegex.test(newEndTime)) {
+        const error = new Error("Invalid time format. Use HH:mm (e.g. 09:00, 18:30)");
+        error.status = 400;
         throw error;
     }
+
+    // ✅ แปลงเวลาเป็น "นาที" เพื่อเอาไปเปรียบเทียบ
+    const [startH, startM] = newStartTime.split(":").map(Number);
+    const [endH, endM] = newEndTime.split(":").map(Number);
+
+    const startMinutes = startH * 60 + startM;
+    const endMinutes = endH * 60 + endM;
+
+    // ✅ เช็กว่า end ต้องมากกว่า start
+    if (endMinutes <= startMinutes) {
+        const error = new Error(
+            "Invalid time range: End time must be strictly after start time."
+        );
+        error.status = 400;
+        throw error;
+    }
+
+    // ✅ Validate capacity
     if (capacity !== undefined && (typeof capacity !== 'number' || capacity <= 0)) {
         const error = new Error("Capacity must be a positive number.");
-        error.status = 400; // Bad Request
+        error.status = 400;
         throw error;
     }
 };
+
 
 /**
  * ตรวจสอบว่าช่วงเวลาใหม่ทับซ้อนกับ Schedule ที่มีอยู่หรือไม่
  * ตรรกะการทับซ้อน: (Start1 < End2) AND (End1 > Start2)
  */
-const _checkOverlap = async (newStartTime, newEndTime, excludeId = null) => {
-    const whereCondition = {
-        [Op.and]: [
-            // Start time ของ Schedule ที่มีอยู่ ต้องน้อยกว่า End time ของ Schedule ใหม่
-            { start_time: { [Op.lt]: newEndTime } }, 
-            // End time ของ Schedule ที่มีอยู่ ต้องมากกว่า Start time ของ Schedule ใหม่
-            { end_time: { [Op.gt]: newStartTime } }
-        ]
-    };
-    
-    if (excludeId) {
-        // สำหรับกรณี Update: ยกเว้น ID ของ Schedule ที่กำลังอัปเดต
-        whereCondition.id = { [Op.not]: excludeId };
-    }
+const _checkOverlapByGym = async (newStartTime,newEndTime,gymEnum,excludeId = null) => {
+  // ✅ Validate format HH:mm
+  const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
-    const existingOverlap = await ClassesSchedule.findOne({
-        where: whereCondition
-    });
+  if (!timeRegex.test(newStartTime) || !timeRegex.test(newEndTime)) {
+    const error = new Error(
+      `Invalid time format: ${newStartTime} - ${newEndTime}`
+    );
+    error.status = 400;
+    throw error;
+  }
 
-    return existingOverlap;
+  const whereCondition = {
+    gym_enum: gymEnum, // ✅ เช็คเฉพาะ Gym เดียวกันเท่านั้น
+    [Op.and]: [
+      // start เดิม < end ใหม่
+      { start_time: { [Op.lt]: newEndTime } },
+
+      // end เดิม > start ใหม่
+      { end_time: { [Op.gt]: newStartTime } }
+    ]
+  };
+
+  // ✅ กรณีแก้ไข (exclude ตัวเองออก)
+  if (excludeId) {
+    whereCondition.id = { [Op.not]: excludeId };
+  }
+
+  const existingOverlap = await ClassesSchedule.findOne({
+    where: whereCondition
+  });
+
+  return existingOverlap; // null = ไม่ชน, object = ชน
 };
+
 
 // =================================================================
 // 2. CORE SERVICE FUNCTIONS (CRUD)
@@ -58,12 +94,10 @@ const _checkOverlap = async (newStartTime, newEndTime, excludeId = null) => {
  */
 const createSchedule = async (scheduleData) => {
     const { start_time, end_time, gym_enum, description, user, capacity } = scheduleData;
-    const newStartTime = new Date(start_time);
-    const newEndTime = new Date(end_time);
-
-    _validateScheduleInput(newStartTime, newEndTime, capacity);
+    console.log("Creating schedule with data:", scheduleData);
+    _validateScheduleInput(start_time, end_time, capacity);
     
-    const existingOverlap = await _checkOverlap(newStartTime, newEndTime);
+    const existingOverlap = await _checkOverlapByGym(start_time, end_time, gym_enum);
 
     if (existingOverlap) {
         const error = new Error("Time conflict: A schedule already exists in this time slot.");
@@ -77,8 +111,8 @@ const createSchedule = async (scheduleData) => {
     try {
         // 1. สร้าง Schedule Master
         const newSchedule = await ClassesSchedule.create({
-            start_time: newStartTime,
-            end_time: newEndTime,
+            start_time: start_time,
+            end_time: end_time,
             gym_enum,
             description,
             created_by: user || 'API_CALL'
@@ -139,6 +173,82 @@ const getSchedules = async (startDate, endDate) => {
         throw new Error("Internal server error during schedule retrieval.");
     }
 };
+
+const getAvailableSchedulesByBookingDate = async (date, gymEnum) => {
+  try {
+    const whereSchedule = {};
+    if (gymEnum) {
+      whereSchedule.gym_enum = gymEnum;
+    }
+
+    const schedules = await ClassesSchedule.findAll({
+      where: whereSchedule,
+
+      include: [
+        // ✅ Capacity ของ Schedule (hasOne → ไม่มี separate)
+        {
+          model: ClassesCapacity,
+          as: "capacity_data",
+          required: true,
+          attributes: ["id", "capacity"]
+        },
+
+        // ✅ เอายอดจองจาก ClassesBooking
+        {
+          model: ClassesBooking,
+          as: "bookings",
+          required: false,
+          attributes: [],
+          where: {
+            booking_status: "SUCCEED",
+            [Op.and]: Sequelize.where(
+              Sequelize.fn("DATE", Sequelize.col("bookings.date_booking")),
+              date
+            )
+          }
+        }
+      ],
+
+      // ✅ เอาเฉพาะฟิลด์ที่ต้องใช้
+      attributes: [
+        "id",
+        "start_time",
+        "end_time",
+        [
+          Sequelize.fn(
+            "COALESCE",
+            Sequelize.fn("SUM", Sequelize.col("bookings.capacity")),
+            0
+          ),
+          "booking_count"
+        ]
+      ],
+
+      group: [
+        "CLASSES_SCHEDULE.id",
+        "capacity_data.id",
+        "capacity_data.capacity"
+      ],
+
+      // ✅ ถ้า booking รวม >= capacity → ไม่แสดง
+      having: Sequelize.literal(
+        `COALESCE(SUM("bookings"."capacity"), 0) < "capacity_data"."capacity"`
+      ),
+
+      order: [["start_time", "ASC"]]
+    });
+
+    return schedules;
+  } catch (error) {
+    console.error(
+      "[SUPABASE DB ERROR] getAvailableSchedulesByBookingDate:",
+      error
+    );
+    throw error;
+  }
+};
+
+
 
 
 /**
@@ -252,5 +362,6 @@ module.exports = {
     createSchedule,
     getSchedules,
     updateSchedule,
-    deleteSchedule
+    deleteSchedule,
+    getAvailableSchedulesByBookingDate
 };
