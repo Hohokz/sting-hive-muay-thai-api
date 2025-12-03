@@ -1,6 +1,7 @@
+require("dotenv").config(); // ✅ ต้องอยู่บนสุด
+
 const express = require("express");
-const { connectDB, sequelize } = require('./config/db'); // ✅ ห้าม import sequelize ตรงๆ
-require("dotenv").config();
+const { connectDB } = require("./config/db");
 const cors = require("cors");
 
 const app = express();
@@ -33,7 +34,7 @@ app.use(
 app.use(express.json());
 
 // -----------------------------------------------------------------
-// B. DATABASE CONNECTION (Safe for Vercel)
+// B. DATABASE CONNECTION (Safe for Render & Vercel)
 // -----------------------------------------------------------------
 
 const setupDatabase = async () => {
@@ -41,25 +42,17 @@ const setupDatabase = async () => {
 
   try {
     console.log("Attempting to connect to database...");
-    await connectDB();
-
-    if (NODE_ENV === 'development' || NODE_ENV === 'test') {
-      await sequelize.sync({ alter: true });
-      console.log("Database models synchronized (Development Mode).");
-    } else {
-      console.log("Database schema assumed to be up-to-date (Production Mode).");
-    }
+    await connectDB(); // ✅ connect + sync อยู่ใน db.js เท่านั้น
 
     isDbConnected = true;
-    console.log("Database connection successful.");
+    console.log("✅ Database connection successful.");
   } catch (error) {
-    console.error('[DB Setup Error]', error.message);
+    console.error("❌ [DB Setup Error]", error);
     isDbConnected = false;
   }
 };
 
-
-// ✅ เรียกตอน Serverless instance start
+// ✅ เรียกครั้งเดียวตอน start
 setupDatabase();
 
 // -----------------------------------------------------------------
@@ -70,7 +63,7 @@ app.use("/api/v1/schedules", require("./routes/classesScheduleRoutes"));
 app.use("/api/v1/bookings", require("./routes/classesBookingRoutes"));
 
 app.get("/", (req, res) => {
-  const dbStatus = isDbConnected ? "Connected" : "Error/Pending";
+  const dbStatus = isDbConnected ? "Connected" : "Error";
 
   if (!isDbConnected && NODE_ENV === "production") {
     return res.status(503).json({
@@ -89,7 +82,13 @@ app.get("/", (req, res) => {
 });
 
 // -----------------------------------------------------------------
-// D. VERCEL EXPORT
+// D. START SERVER (IMPORTANT FOR RENDER)
 // -----------------------------------------------------------------
 
-module.exports = app;
+if (NODE_ENV !== "test") {
+  app.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+  });
+}
+
+module.exports = app; // ✅ ยังรองรับ Vercel ได้
