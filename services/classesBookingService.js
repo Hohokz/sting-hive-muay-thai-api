@@ -5,8 +5,8 @@ const {
 } = require("../models/Associations");
 const { sequelize } = require("../config/db");
 const { Op, fn, col, literal } = require("sequelize");
-const {sendBookingConfirmationEmail} = require("../utils/emailService");
-const {getSchedulesById} = require("../services/classesScheduleService");
+const { sendBookingConfirmationEmail } = require("../utils/emailService");
+const { getSchedulesById } = require("../services/classesScheduleService");
 
 // =================================================================
 // HELPER FUNCTIONS
@@ -18,7 +18,11 @@ const {getSchedulesById} = require("../services/classesScheduleService");
  * @param {object} transaction - Database Transaction
  * @returns {Promise<void>} Throws error if full
  */
-const _checkAvailability = async (classes_schedule_id, transaction, capacity) => {
+const _checkAvailability = async (
+  classes_schedule_id,
+  transaction,
+  capacity
+) => {
   // ✅ 1. LOCK เฉพาะ schedule
   const schedule = await ClassesSchedule.findByPk(classes_schedule_id, {
     transaction,
@@ -82,48 +86,65 @@ const _checkAvailability = async (classes_schedule_id, transaction, capacity) =>
   return true;
 };
 
-
-const sendEmailBookingConfirmation = async (client_email, client_name, is_private, date_booking, newBooking, classes_schedule_id,) => {
+const sendEmailBookingConfirmation = async (
+  client_email,
+  client_name,
+  is_private,
+  date_booking,
+  newBooking,
+  classes_schedule_id,
+  update_flag
+) => {
   const fs = require("fs");
-    const path = require("path");
-    const schedule = await getSchedulesById(classes_schedule_id);
-    if(schedule == null){
-      const error = new Error("Schedule not found.");
-      error.status = 404;
-      throw error;
-    }
+  const path = require("path");
+  const schedule = await getSchedulesById(classes_schedule_id);
+  if (schedule == null) {
+    const error = new Error("Schedule not found.");
+    error.status = 404;
+    throw error;
+  }
+  const url = process.env.FRONT_END_URL;
+  let templatePath = "";
 
-    const emailTemplate = fs
-      .readFileSync(
-        path.join(__dirname, "../templates/booking-confirmation-email.html"),
-        "utf8"
-      )
-      .replace("{{client_name}}", client_name)
-      .replace("{{class_type}}", is_private ? "Private Class" : "Group Class")
-      .replace("{{date_human}}", new Date(date_booking).toDateString())
-      .replace("{{time_human}}", `${schedule.start_time} - ${schedule.end_time}`)
-      .replace("{{location}}", "Sting Club Muay Thai Gym")
-      .replace("{{trainer_name}}", "Sting Coach")
-      .replace("{{action_url}}", `http://localhost:5173/edit-booking/${newBooking.id}`)
-      .replace("{{help_url}}", `https://stinggym.com/support`)
-      .replace("{{location_map}}", `https://maps.google.com`);
+  if (update_flag === "Y") {
+    // ✅ RESCHEDULE
+    templatePath = "../templates/booking-reschedule-email.html";
+  } else if (update_flag === "C") {
+    // ✅ CANCEL
+    templatePath = "../templates/booking-cancellation-email.html";
+  } else {
+    // ✅ CONFIRM
+    templatePath = "../templates/booking-confirmation-email.html";
+  }
 
-    // ✅ 6. ส่งอีเมล
-    if (client_email) {
-      try {
-        await sendBookingConfirmationEmail(
-          client_email,
-          "Your Muay Thai Class — Booking Confirmed 🥊",
-          emailTemplate
-        );
-      } catch (emailError) {
-        console.error(
-          "[EMAIL ERROR] Send failed but booking success:",
-          emailError
-        );
-      }
+  emailTemplate = fs
+    .readFileSync(path.join(__dirname, templatePath), "utf8")
+    .replace("{{client_name}}", client_name)
+    .replace("{{class_type}}", is_private ? "Private Class" : "Group Class")
+    .replace("{{date_human}}", new Date(date_booking).toDateString())
+    .replace("{{time_human}}", `${schedule.start_time} - ${schedule.end_time}`)
+    .replace("{{location}}", "Sting Club Muay Thai Gym")
+    .replace("{{trainer_name}}", "Sting Coach")
+    .replace("{{action_url}}", `${url}/edit-booking/${newBooking.id}`)
+    .replace("{{help_url}}", `https://stinggym.com/support`)
+    .replace("{{location_map}}", `https://maps.google.com`);
+
+  // ✅ 6. ส่งอีเมล
+  if (client_email) {
+    try {
+      await sendBookingConfirmationEmail(
+        client_email,
+        "Your Muay Thai Class — Booking Confirmed 🥊",
+        emailTemplate
+      );
+    } catch (emailError) {
+      console.error(
+        "[EMAIL ERROR] Send failed but booking success:",
+        emailError
+      );
     }
-}
+  }
+};
 
 // =================================================================
 // CORE SERVICE FUNCTIONS
@@ -189,12 +210,10 @@ const createBooking = async (bookingData) => {
 
     await transaction.commit();
     return newBooking;
-
   } catch (error) {
     await transaction.rollback();
     console.error("[Booking Service] Create Error:", error);
     throw error; // ✅ ส่ง error จริงกลับไป
-
   } finally {
     // ✅ ส่งเมลเฉพาะตอนสร้างสำเร็จเท่านั้น
     if (newBooking) {
@@ -205,7 +224,8 @@ const createBooking = async (bookingData) => {
           is_private,
           date_booking,
           newBooking,
-          classes_schedule_id
+          classes_schedule_id,
+          "N"
         );
       } catch (mailErr) {
         console.error("📧 Email send failed:", mailErr);
@@ -214,7 +234,6 @@ const createBooking = async (bookingData) => {
     }
   }
 };
-
 
 const updateBooking = async (bookingId, updateData) => {
   const {
@@ -267,6 +286,24 @@ const updateBooking = async (bookingId, updateData) => {
     await transaction.rollback();
     console.error("[Booking Service] Update Error:", error);
     throw error;
+  } finally {
+    // ✅ ส่งเมลเฉพาะตอนสร้างสำเร็จเท่านั้น
+    if (newBooking) {
+      try {
+        await sendEmailBookingConfirmation(
+          client_email,
+          client_name,
+          is_private,
+          date_booking,
+          newBooking,
+          classes_schedule_id,
+          "Y"
+        );
+      } catch (mailErr) {
+        console.error("📧 Email send failed:", mailErr);
+        // ❗ ไม่ throw เพราะไม่ควรทับ error หลัก
+      }
+    }
   }
 };
 
