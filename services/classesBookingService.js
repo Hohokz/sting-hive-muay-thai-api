@@ -377,6 +377,24 @@ const updateBookingStatus = async (bookingId, newStatus, user) => {
   } catch (error) {
     await transaction.rollback();
     throw error;
+  }finally {
+    // ✅ ส่งเมลเฉพาะตอนสร้างสำเร็จเท่านั้น
+    if (newBooking) {
+      try {
+        await sendEmailBookingConfirmation(
+          client_email,
+          client_name,
+          is_private,
+          date_booking,
+          newBooking,
+          classes_schedule_id,
+          "C"
+        );
+      } catch (mailErr) {
+        console.error("📧 Email send failed:", mailErr);
+        // ❗ ไม่ throw เพราะไม่ควรทับ error หลัก
+      }
+    }
   }
 };
 
