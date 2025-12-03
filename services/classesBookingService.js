@@ -21,13 +21,16 @@ const { getSchedulesById } = require("../services/classesScheduleService");
 const _checkAvailability = async (
   classes_schedule_id,
   transaction,
-  capacity
+  capacity,
+  bookingData
 ) => {
   // ✅ 1. LOCK เฉพาะ schedule
   const schedule = await ClassesSchedule.findByPk(classes_schedule_id, {
     transaction,
     lock: transaction.LOCK.UPDATE,
   });
+
+  console.log(`bookingData : ${bookingData}`)
 
   if (!schedule) {
     const error = new Error("Class schedule not found.");
@@ -48,9 +51,18 @@ const _checkAvailability = async (
   }
 
   // ✅ 3. นับ booking ที่ยัง active
+  const startOfDay = new Date(bookingData);
+  startOfDay.setHours(0, 0, 0, 0);
+
+  const endOfDay = new Date(bookingData);
+  endOfDay.setHours(23, 59, 59, 999);
+
   const currentBookingCount = await ClassesBooking.sum("capacity", {
     where: {
       classes_schedule_id,
+      date_booking: {
+        [Op.between]: [startOfDay, endOfDay],
+      },
       booking_status: {
         [Op.notIn]: ["CANCELED", "FAILED"],
       },
@@ -111,7 +123,7 @@ const sendEmailBookingConfirmation = async (
     templatePath = "../templates/booking-reschedule-email.html";
   } else if (update_flag === "C") {
     // ✅ CANCEL
-    templatePath = "../templates/booking-cancellation-email.html";
+    templatePath = "../templates/booking-cancel-email.html";
   } else {
     // ✅ CONFIRM
     templatePath = "../templates/booking-confirmation-email.html";
@@ -125,9 +137,10 @@ const sendEmailBookingConfirmation = async (
     .replace("{{time_human}}", `${schedule.start_time} - ${schedule.end_time}`)
     .replace("{{location}}", "Sting Club Muay Thai Gym")
     .replace("{{trainer_name}}", "Sting Coach")
-    .replace("{{action_url}}", `${url}/edit-booking/${newBooking.id}`)
+    .replace("{{action_url}}", `${url}edit-booking/${newBooking.id}`)
     .replace("{{help_url}}", `https://stinggym.com/support`)
-    .replace("{{location_map}}", `https://maps.google.com`);
+    .replace("{{location_map}}", `https://maps.google.com`)
+    .replace("{{booking_url}}",  `${url}booking`);
 
   // ✅ 6. ส่งอีเมล
   if (client_email) {
@@ -171,7 +184,12 @@ const createBooking = async (bookingData) => {
 
   try {
     // 1. เช็คที่นั่ง
-    await _checkAvailability(classes_schedule_id, transaction, capacity);
+    await _checkAvailability(
+      classes_schedule_id,
+      transaction,
+      capacity,
+      date_booking
+    );
 
     // 2. กันจองซ้ำ
     if (client_email) {
@@ -263,6 +281,9 @@ const updateBooking = async (bookingId, updateData) => {
     const classes_schedule_id = booking.classes_schedule_id;
 
     // 2. ถ้ามีการเปลี่ยน capacity หรือ date → ต้องเช็คที่นั่งใหม่
+    console.log(
+      `capacity : ${capacity}, booking.capacity : ${booking.capacity}, date_booking : ${booking.capacity}, booking.date_booking : ${booking.date_booking}`
+    );
     if (
       capacity !== booking.capacity ||
       date_booking !== booking.date_booking
@@ -270,26 +291,9 @@ const updateBooking = async (bookingId, updateData) => {
       await _checkAvailability(
         classes_schedule_id,
         transaction,
-        capacity
+        capacity,
+        date_booking
       );
-    }
-
-    // 3. ถ้ามีการเปลี่ยนอีเมล → กันซ้ำ
-    if (client_email && client_email !== booking.client_email) {
-      const duplicate = await ClassesBooking.findOne({
-        where: {
-          classes_schedule_id,
-          client_email,
-          booking_status: { [Op.notIn]: ["CANCELED", "FAILED"] },
-        },
-        transaction,
-      });
-
-      if (duplicate) {
-        const error = new Error("This email has already booked this class.");
-        error.status = 409;
-        throw error;
-      }
     }
 
     // 4. Update
@@ -308,12 +312,10 @@ const updateBooking = async (bookingId, updateData) => {
 
     await transaction.commit();
     return updatedBooking;
-
   } catch (error) {
     await transaction.rollback();
     console.error("[Booking Service] Update Error:", error);
     throw error;
-
   } finally {
     // ✅ ส่งเมลเฉพาะตอน UPDATE สำเร็จเท่านั้น
     if (updatedBooking) {
@@ -406,11 +408,9 @@ const updateBookingStatus = async (bookingId, newStatus, user) => {
 
     await transaction.commit();
     return updatedBooking;
-
   } catch (error) {
     await transaction.rollback();
     throw error;
-
   } finally {
     // ✅ ส่งเมลเฉพาะตอน UPDATE สถานะสำเร็จจริง ๆ
     if (updatedBooking && newStatus === "CANCELED") {
@@ -430,7 +430,6 @@ const updateBookingStatus = async (bookingId, newStatus, user) => {
     }
   }
 };
-
 
 module.exports = {
   createBooking,
