@@ -49,7 +49,7 @@ const _validateScheduleInput = (newStartTime, newEndTime, capacity) => {
  * ตรวจสอบว่าช่วงเวลาใหม่ทับซ้อนกับ Schedule ที่มีอยู่หรือไม่
  * ตรรกะการทับซ้อน: (Start1 < End2) AND (End1 > Start2)
  */
-const _checkOverlapByGym = async (newStartTime,newEndTime,gymEnum,excludeId = null) => {
+const _checkOverlapByGym = async (newStartTime,newEndTime,gymEnum,excludeId = null, isPrivateClass = false) => {
   // ✅ Validate format HH:mm
   const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
@@ -62,7 +62,8 @@ const _checkOverlapByGym = async (newStartTime,newEndTime,gymEnum,excludeId = nu
   }
 
   const whereCondition = {
-    gym_enum: gymEnum, // ✅ เช็คเฉพาะ Gym เดียวกันเท่านั้น
+    gym_enum: gymEnum,
+    is_private_class: isPrivateClass, // ✅ เช็คเฉพาะ Gym เดียวกันเท่านั้น
     [Op.and]: [
       // start เดิม < end ใหม่
       { start_time: { [Op.lt]: newEndTime } },
@@ -97,7 +98,7 @@ const createSchedule = async (scheduleData) => {
     console.log("Creating schedule with data:", scheduleData);
     _validateScheduleInput(start_time, end_time, capacity);
     
-    const existingOverlap = await _checkOverlapByGym(start_time, end_time, gym_enum);
+    const existingOverlap = await _checkOverlapByGym(start_time, end_time, gym_enum, null, is_private_class);
 
     if (existingOverlap) {
         const error = new Error("Time conflict: A schedule already exists in this time slot.");
