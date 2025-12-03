@@ -76,7 +76,7 @@ const getSchedules = async (req, res) => {
 };
 
 const getAvailableSchedules = async (req, res) => {
-  const { date, gym_enum } = req.query;
+  const { date, gym_enum, is_private_class } = req.query;
 
   if (!date) {
     return res.status(400).json({
@@ -88,7 +88,8 @@ const getAvailableSchedules = async (req, res) => {
   try {
     const data = await scheduleService.getAvailableSchedulesByBookingDate(
       date,
-      gym_enum
+      gym_enum,
+      is_private_class
     );
 
     return res.status(200).json({

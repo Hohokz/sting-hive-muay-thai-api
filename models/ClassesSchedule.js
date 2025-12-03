@@ -31,7 +31,12 @@ const ClassesSchedule = sequelize.define('CLASSES_SCHEDULE', {
     created_date: { type: DataTypes.DATE(6), allowNull: false, defaultValue: DataTypes.NOW },
     updated_date: { type: DataTypes.DATE(6), allowNull: false, defaultValue: DataTypes.NOW },
     created_by: DataTypes.TEXT,
-    updated_by: DataTypes.TEXT
+    updated_by: DataTypes.TEXT,
+    is_private_class:{
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: false,
+    }
 }, { tableName: 'classes_schedule', timestamps: false });
 
 module.exports = ClassesSchedule;

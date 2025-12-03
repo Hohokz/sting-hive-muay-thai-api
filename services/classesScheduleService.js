@@ -93,7 +93,7 @@ const _checkOverlapByGym = async (newStartTime,newEndTime,gymEnum,excludeId = nu
  * [CREATE] สร้างรายการ Schedule ใหม่ พร้อม Capacity
  */
 const createSchedule = async (scheduleData) => {
-    const { start_time, end_time, gym_enum, description, user, capacity } = scheduleData;
+    const { start_time, end_time, gym_enum, description, user, capacity, is_private_class } = scheduleData;
     console.log("Creating schedule with data:", scheduleData);
     _validateScheduleInput(start_time, end_time, capacity);
     
@@ -115,6 +115,7 @@ const createSchedule = async (scheduleData) => {
             end_time: end_time,
             gym_enum,
             description,
+            is_private_class: is_private_class || false,
             created_by: user || 'API_CALL'
         }, { transaction });
 
@@ -187,11 +188,14 @@ const getSchedules = async (startDate, endDate) => {
     }
 };
 
-const getAvailableSchedulesByBookingDate = async (date, gymEnum) => {
+const getAvailableSchedulesByBookingDate = async (date, gymEnum, isPrivateClass) => {
   try {
     const whereSchedule = {};
     if (gymEnum) {
       whereSchedule.gym_enum = gymEnum;
+    }
+    if (isPrivateClass !== undefined) {
+      whereSchedule.is_private_class = isPrivateClass;
     }
 
     const schedules = await ClassesSchedule.findAll({
