@@ -18,8 +18,8 @@ const {getSchedulesById} = require("../services/classesScheduleService");
  * @param {object} transaction - Database Transaction
  * @returns {Promise<void>} Throws error if full
  */
-const _checkAvailability = async (classes_schedule_id, transaction) => {
-  // ✅ 1. LOCK เฉพาะ schedule เท่านั้น (ห้าม include)
+const _checkAvailability = async (classes_schedule_id, transaction, capacity) => {
+  // ✅ 1. LOCK เฉพาะ schedule
   const schedule = await ClassesSchedule.findByPk(classes_schedule_id, {
     transaction,
     lock: transaction.LOCK.UPDATE,
@@ -31,7 +31,7 @@ const _checkAvailability = async (classes_schedule_id, transaction) => {
     throw error;
   }
 
-  // ✅ 2. ดึง capacity แบบไม่ใช้ lock (ห้าม LEFT JOIN)
+  // ✅ 2. ดึง capacity
   const capacityData = await ClassesCapacity.findOne({
     where: { classes_id: classes_schedule_id },
     transaction,
@@ -43,7 +43,7 @@ const _checkAvailability = async (classes_schedule_id, transaction) => {
     throw error;
   }
 
-  // ✅ 3. นับจำนวน booking ที่ยัง active
+  // ✅ 3. นับ booking ที่ยัง active
   const currentBookingCount = await ClassesBooking.sum("capacity", {
     where: {
       classes_schedule_id,
@@ -55,16 +55,33 @@ const _checkAvailability = async (classes_schedule_id, transaction) => {
   });
 
   const usedCapacity = currentBookingCount || 0;
+  const maxCapacity = capacityData.capacity;
+  const totalAfterBooking = usedCapacity + capacity;
 
-  //   // ✅ 4. ตรวจสอบว่าเต็มหรือยัง
-  //   if (usedCapacity >= capacityData.capacity) {
-  //     const error = new Error("This class is fully booked.");
-  //     error.status = 409;
-  //     throw error;
-  //   }
+  console.log(`REQUEST: ${capacity}`);
+  console.log(`USED: ${usedCapacity}`);
+  console.log(`MAX: ${maxCapacity}`);
+  console.log(`AFTER BOOKING: ${totalAfterBooking}`);
+
+  // ✅ 4. เช็คว่าจองเกินหรือไม่ (logic ที่ถูกต้อง)
+  if (totalAfterBooking > maxCapacity) {
+    const error = new Error(
+      `Capacity exceeded: ${usedCapacity}/${maxCapacity} (request ${capacity})`
+    );
+    error.status = 409;
+    throw error;
+  }
+
+  // ✅ 5. เช็คว่าเต็มพอดีแล้ว (กันเผื่อ edge case)
+  if (usedCapacity >= maxCapacity) {
+    const error = new Error("This class is fully booked.");
+    error.status = 409;
+    throw error;
+  }
 
   return true;
 };
+
 
 const sendEmailBookingConfirmation = async (client_email, client_name, is_private, date_booking, newBooking, classes_schedule_id,) => {
   const fs = require("fs");
@@ -125,22 +142,24 @@ const createBooking = async (bookingData) => {
     is_private,
     date_booking,
   } = bookingData;
+
   console.log("[Booking Service] Creating booking for:", bookingData);
-  // เริ่ม Transaction เพื่อความปลอดภัยของข้อมูล (Atomic Operation)
+
   const transaction = await sequelize.transaction();
+  let newBooking = null; // ✅ ต้องอยู่นอก try
 
   try {
-    // 1. ตรวจสอบว่าคลาสว่างหรือไม่ (Critical Step)
-    await _checkAvailability(classes_schedule_id, transaction);
+    // 1. เช็คที่นั่ง
+    await _checkAvailability(classes_schedule_id, transaction, capacity);
 
-    // 2. ตรวจสอบว่า User คนนี้เคยจองคลาสนี้ไปแล้วหรือยัง (Optional: ป้องกันการจองซ้ำ)
+    // 2. กันจองซ้ำ
     if (client_email) {
       const existingBooking = await ClassesBooking.findOne({
         where: {
           classes_schedule_id,
           client_email,
           booking_status: { [Op.notIn]: ["CANCELED", "FAILED"] },
-          date_booking: date_booking,
+          date_booking,
         },
         transaction,
       });
@@ -152,32 +171,50 @@ const createBooking = async (bookingData) => {
       }
     }
 
-    // 3. สร้าง Booking Record
-    const newBooking = await ClassesBooking.create(
+    // 3. Create booking
+    newBooking = await ClassesBooking.create(
       {
         classes_schedule_id,
         client_name,
         client_email,
         client_phone,
         booking_status: "SUCCEED",
-        capacity: capacity,
+        capacity,
         is_private: is_private || false,
-        date_booking: date_booking,
+        date_booking,
         created_by: client_name || "CLIENT_APP",
       },
       { transaction }
     );
 
     await transaction.commit();
-    await sendEmailBookingConfirmation(client_email, client_name, is_private, date_booking, newBooking, classes_schedule_id);
-
     return newBooking;
+
   } catch (error) {
     await transaction.rollback();
     console.error("[Booking Service] Create Error:", error);
-    throw error; // ส่งต่อ Error ให้ Controller จัดการ
+    throw error; // ✅ ส่ง error จริงกลับไป
+
+  } finally {
+    // ✅ ส่งเมลเฉพาะตอนสร้างสำเร็จเท่านั้น
+    if (newBooking) {
+      try {
+        await sendEmailBookingConfirmation(
+          client_email,
+          client_name,
+          is_private,
+          date_booking,
+          newBooking,
+          classes_schedule_id
+        );
+      } catch (mailErr) {
+        console.error("📧 Email send failed:", mailErr);
+        // ❗ ไม่ throw เพราะไม่ควรทับ error หลัก
+      }
+    }
   }
 };
+
 
 const updateBooking = async (bookingId, updateData) => {
   const {
