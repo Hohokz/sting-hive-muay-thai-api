@@ -251,7 +251,7 @@ const updateBooking = async (bookingId, updateData) => {
 
   try {
     // 1. เช็คว่า booking มีอยู่จริง
-    const booking = await ClassesBooking.findByPk(bookingId, { transaction });
+    let booking = await ClassesBooking.findByPk(bookingId, { transaction });
 
     if (!booking) {
       const error = new Error("Booking not found.");
@@ -267,7 +267,7 @@ const updateBooking = async (bookingId, updateData) => {
     }
 
     // 3. อัปเดตข้อมูล
-    await booking.update(
+    booking = await booking.update(
       {
         client_name,
         client_email,
@@ -347,7 +347,7 @@ const getBookings = async (filters) => {
 const updateBookingStatus = async (bookingId, newStatus, user) => {
   const transaction = await sequelize.transaction();
   try {
-    const booking = await ClassesBooking.findByPk(bookingId, { transaction });
+    let booking = await ClassesBooking.findByPk(bookingId, { transaction });
 
     if (!booking) {
       const error = new Error("Booking not found.");
@@ -364,7 +364,7 @@ const updateBookingStatus = async (bookingId, newStatus, user) => {
       await _checkAvailability(booking.classes_schedule_id, transaction);
     }
 
-    await booking.update(
+    booking = await booking.update(
       {
         booking_status: newStatus,
         updated_by: user || "ADMIN",
