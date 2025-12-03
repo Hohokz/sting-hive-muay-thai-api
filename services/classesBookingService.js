@@ -288,14 +288,14 @@ const updateBooking = async (bookingId, updateData) => {
     throw error;
   } finally {
     // ✅ ส่งเมลเฉพาะตอนสร้างสำเร็จเท่านั้น
-    if (newBooking) {
+    if (booking) {
       try {
         await sendEmailBookingConfirmation(
           client_email,
           client_name,
           is_private,
           date_booking,
-          newBooking,
+          booking,
           classes_schedule_id,
           "Y"
         );
@@ -379,14 +379,14 @@ const updateBookingStatus = async (bookingId, newStatus, user) => {
     throw error;
   }finally {
     // ✅ ส่งเมลเฉพาะตอนสร้างสำเร็จเท่านั้น
-    if (newBooking) {
+    if (booking) {
       try {
         await sendEmailBookingConfirmation(
           client_email,
           client_name,
           is_private,
           date_booking,
-          newBooking,
+          booking,
           classes_schedule_id,
           "C"
         );
