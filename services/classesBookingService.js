@@ -248,10 +248,10 @@ const updateBooking = async (bookingId, updateData) => {
   console.log("[Booking Service] Updating booking:", bookingId, updateData);
 
   const transaction = await sequelize.transaction();
-
+  let booking = null;
   try {
     // 1. เช็คว่า booking มีอยู่จริง
-    let booking = await ClassesBooking.findByPk(bookingId, { transaction });
+    booking = await ClassesBooking.findByPk(bookingId, { transaction });
 
     if (!booking) {
       const error = new Error("Booking not found.");
@@ -346,8 +346,9 @@ const getBookings = async (filters) => {
  */
 const updateBookingStatus = async (bookingId, newStatus, user) => {
   const transaction = await sequelize.transaction();
+  let booking = null;
   try {
-    let booking = await ClassesBooking.findByPk(bookingId, { transaction });
+    booking = await ClassesBooking.findByPk(bookingId, { transaction });
 
     if (!booking) {
       const error = new Error("Booking not found.");
