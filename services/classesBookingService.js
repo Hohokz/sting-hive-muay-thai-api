@@ -248,10 +248,11 @@ const updateBooking = async (bookingId, updateData) => {
   console.log("[Booking Service] Updating booking:", bookingId, updateData);
 
   const transaction = await sequelize.transaction();
-  let booking = null;
+  let updatedBooking = null;
+
   try {
     // 1. เช็คว่า booking มีอยู่จริง
-    booking = await ClassesBooking.findByPk(bookingId, { transaction });
+    const booking = await ClassesBooking.findByPk(bookingId, { transaction });
 
     if (!booking) {
       const error = new Error("Booking not found.");
@@ -259,15 +260,40 @@ const updateBooking = async (bookingId, updateData) => {
       throw error;
     }
 
-    // 2. (Optional) กัน email ซ้ำในคลาสเดิม ถ้ามีการแก้ email
-    if (client_email !== booking.client_email) {
-      const error = new Error("This email not booked this class.");
-      error.status = 409;
-      throw error;
+    const classes_schedule_id = booking.classes_schedule_id;
+
+    // 2. ถ้ามีการเปลี่ยน capacity หรือ date → ต้องเช็คที่นั่งใหม่
+    if (
+      capacity !== booking.capacity ||
+      date_booking !== booking.date_booking
+    ) {
+      await _checkAvailability(
+        classes_schedule_id,
+        transaction,
+        capacity
+      );
     }
 
-    // 3. อัปเดตข้อมูล
-    booking = await booking.update(
+    // 3. ถ้ามีการเปลี่ยนอีเมล → กันซ้ำ
+    if (client_email && client_email !== booking.client_email) {
+      const duplicate = await ClassesBooking.findOne({
+        where: {
+          classes_schedule_id,
+          client_email,
+          booking_status: { [Op.notIn]: ["CANCELED", "FAILED"] },
+        },
+        transaction,
+      });
+
+      if (duplicate) {
+        const error = new Error("This email has already booked this class.");
+        error.status = 409;
+        throw error;
+      }
+    }
+
+    // 4. Update
+    updatedBooking = await booking.update(
       {
         client_name,
         client_email,
@@ -281,27 +307,28 @@ const updateBooking = async (bookingId, updateData) => {
     );
 
     await transaction.commit();
-    return booking;
+    return updatedBooking;
+
   } catch (error) {
     await transaction.rollback();
     console.error("[Booking Service] Update Error:", error);
     throw error;
+
   } finally {
-    // ✅ ส่งเมลเฉพาะตอนสร้างสำเร็จเท่านั้น
-    if (booking) {
+    // ✅ ส่งเมลเฉพาะตอน UPDATE สำเร็จเท่านั้น
+    if (updatedBooking) {
       try {
         await sendEmailBookingConfirmation(
-          client_email,
-          client_name,
-          is_private,
-          date_booking,
-          booking,
-          classes_schedule_id,
-          "Y"
+          updatedBooking.client_email,
+          updatedBooking.client_name,
+          updatedBooking.is_private,
+          updatedBooking.date_booking,
+          updatedBooking,
+          updatedBooking.classes_schedule_id,
+          "Y" // ✅ FLAG RESCHEDULE
         );
       } catch (mailErr) {
         console.error("📧 Email send failed:", mailErr);
-        // ❗ ไม่ throw เพราะไม่ควรทับ error หลัก
       }
     }
   }
@@ -346,9 +373,10 @@ const getBookings = async (filters) => {
  */
 const updateBookingStatus = async (bookingId, newStatus, user) => {
   const transaction = await sequelize.transaction();
-  let booking = null;
+  let updatedBooking = null;
+
   try {
-    booking = await ClassesBooking.findByPk(bookingId, { transaction });
+    const booking = await ClassesBooking.findByPk(bookingId, { transaction });
 
     if (!booking) {
       const error = new Error("Booking not found.");
@@ -356,16 +384,19 @@ const updateBookingStatus = async (bookingId, newStatus, user) => {
       throw error;
     }
 
-    // ถ้าเปลี่ยนเป็น SUCCEED/RESCHEDULED ต้องเช็ค Capacity อีกรอบไหม?
-    // ปกติ PENDING ถือว่าจองที่ไว้แล้ว ไม่ต้องเช็คซ้ำ แต่ถ้ากู้คืนจาก CANCELED -> PENDING ต้องเช็ค
+    // ✅ ถ้ากำลัง "กู้คืนที่นั่ง" ต้องเช็ค capacity ใหม่
+    const oldStatus = booking.booking_status;
+    const needSeatStatuses = ["PENDING", "SUCCEED", "RESCHEDULED"];
+    const noSeatStatuses = ["CANCELED", "FAILED"];
+
     if (
-      ["CANCELED", "FAILED"].includes(booking.booking_status) &&
-      ["PENDING", "SUCCEED"].includes(newStatus)
+      noSeatStatuses.includes(oldStatus) &&
+      needSeatStatuses.includes(newStatus)
     ) {
       await _checkAvailability(booking.classes_schedule_id, transaction);
     }
 
-    booking = await booking.update(
+    updatedBooking = await booking.update(
       {
         booking_status: newStatus,
         updated_by: user || "ADMIN",
@@ -374,30 +405,32 @@ const updateBookingStatus = async (bookingId, newStatus, user) => {
     );
 
     await transaction.commit();
-    return booking;
+    return updatedBooking;
+
   } catch (error) {
     await transaction.rollback();
     throw error;
-  }finally {
-    // ✅ ส่งเมลเฉพาะตอนสร้างสำเร็จเท่านั้น
-    if (booking) {
+
+  } finally {
+    // ✅ ส่งเมลเฉพาะตอน UPDATE สถานะสำเร็จจริง ๆ
+    if (updatedBooking && newStatus === "CANCELED") {
       try {
         await sendEmailBookingConfirmation(
-          client_email,
-          client_name,
-          is_private,
-          date_booking,
-          booking,
-          classes_schedule_id,
-          "C"
+          updatedBooking.client_email,
+          updatedBooking.client_name,
+          updatedBooking.is_private,
+          updatedBooking.date_booking,
+          updatedBooking,
+          updatedBooking.classes_schedule_id,
+          "C" // ✅ FLAG CANCEL
         );
       } catch (mailErr) {
         console.error("📧 Email send failed:", mailErr);
-        // ❗ ไม่ throw เพราะไม่ควรทับ error หลัก
       }
     }
   }
 };
+
 
 module.exports = {
   createBooking,
