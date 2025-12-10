@@ -4,7 +4,9 @@ const {
   ClassesCapacity,
 } = require("../models/Associations");
 const { sequelize } = require("../config/db");
-const { Op, fn, col, literal } = require("sequelize");
+const { Op } = require("sequelize");
+const fs = require("fs");
+const path = require("path");
 const { sendBookingConfirmationEmail } = require("../utils/emailService");
 const { getSchedulesById } = require("../services/classesScheduleService");
 
@@ -107,49 +109,65 @@ const sendEmailBookingConfirmation = async (
   classes_schedule_id,
   update_flag
 ) => {
-  const fs = require("fs");
-  const path = require("path");
   const schedule = await getSchedulesById(classes_schedule_id);
-  if (schedule == null) {
+  if (!schedule) {
     const error = new Error("Schedule not found.");
     error.status = 404;
     throw error;
   }
-  const url = process.env.FRONT_END_URL;
+
+  const url = process.env.FRONT_END_URL?.replace(/\/$/, "");
   let templatePath = "";
+  let emailSubject = "";
 
   if (update_flag === "Y") {
-    // ✅ RESCHEDULE
     templatePath = "../templates/booking-reschedule-email.html";
+    emailSubject = "Your Muay Thai Class — Rescheduled 🥊";
   } else if (update_flag === "C") {
-    // ✅ CANCEL
     templatePath = "../templates/booking-cancel-email.html";
+    emailSubject = "Your Muay Thai Class — Canceled ❌";
   } else {
-    // ✅ CONFIRM
     templatePath = "../templates/booking-confirmation-email.html";
+    emailSubject = "Your Muay Thai Class — Booking Confirmed 🥊";
   }
 
-  emailTemplate = fs
-    .readFileSync(path.join(__dirname, templatePath), "utf8")
+  // ✅ เช็ค path ก่อนอ่านไฟล์ (กันพัง)
+  const fullPath = path.join(__dirname, templatePath);
+  if (!fs.existsSync(fullPath)) {
+    throw new Error("Email template not found: " + fullPath);
+  }
+
+  let emailTemplate = fs
+    .readFileSync(fullPath, "utf8")
     .replace("{{client_name}}", client_name)
     .replace("{{class_type}}", is_private ? "Private Class" : "Group Class")
-    .replace("{{date_human}}", new Date(date_booking).toDateString())
+    .replace(
+      "{{date_human}}",
+      new Date(date_booking).toLocaleDateString("th-TH", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      })
+    )
     .replace("{{time_human}}", `${schedule.start_time} - ${schedule.end_time}`)
     .replace("{{location}}", "Sting Club Muay Thai Gym")
     .replace("{{trainer_name}}", "Sting Coach")
-    .replace("{{action_url}}", `${url}edit-booking/${newBooking.id}`)
+    .replace(
+      "{{action_url}}",
+      `${url}/edit-booking/${encodeURIComponent(newBooking.id)}`
+    )
     .replace("{{help_url}}", `https://stinggym.com/support`)
     .replace("{{location_map}}", `https://maps.google.com`)
-    .replace("{{booking_url}}",  `${url}booking`);
+    .replace("{{booking_url}}", `${url}/booking`);
 
-  // ✅ 6. ส่งอีเมล
   if (client_email) {
     try {
       await sendBookingConfirmationEmail(
         client_email,
-        "Your Muay Thai Class — Booking Confirmed 🥊",
+        emailSubject,
         emailTemplate
       );
+      console.log("✅ Booking email sent:", client_email);
     } catch (emailError) {
       console.error(
         "[EMAIL ERROR] Send failed but booking success:",

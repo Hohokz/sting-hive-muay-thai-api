@@ -1,20 +1,27 @@
 const nodemailer = require("nodemailer");
 
 const transporter = nodemailer.createTransport({
-  service: "gmail",
+  host: process.env.EMAIL_HOST,
+  port: Number(process.env.EMAIL_PORT),
+  secure: false,
   auth: {
-    user: process.env.MAIL_USER, // เช่น yourmail@gmail.com
-    pass: process.env.MAIL_PASS  // App Password เท่านั้น!
-  }
+    user: process.env.EMAIL_USER, // apikey
+    pass: process.env.EMAIL_PASS, // xsmtpsib-xxxxx
+  },
 });
 
 const sendBookingConfirmationEmail = async (to, subject, html) => {
-  await transporter.sendMail({
-    from: `"Sting Gym" <${process.env.MAIL_USER}>`,
-    to,
-    subject,
-    html,
-  });
+  try {
+    await transporter.sendMail({
+      from: process.env.MAIL_FROM,
+      to,
+      subject,
+      html,
+    });
+    console.log("✅ Email sent successfully");
+  } catch (err) {
+    console.error("❌ Email send failed:", err);
+  }
 };
 
 module.exports = { sendBookingConfirmationEmail };
