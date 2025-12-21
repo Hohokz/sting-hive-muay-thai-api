@@ -62,6 +62,7 @@ setupDatabase();
 app.use("/api/v1/schedules", require("./routes/classesScheduleRoutes"));
 app.use("/api/v1/bookings", require("./routes/classesBookingRoutes"));
 app.use("/api/v1/dashboard", require("./routes/dashBoardRoutes"))
+app.use("/api/v1/auth", require("./routes/authRoutes")); // ✅ Auth Routes
 
 app.get("/", (req, res) => {
   const dbStatus = isDbConnected ? "Connected" : "Error";
