@@ -97,7 +97,6 @@ const getDailyBookingsByDate = async (date) => {
 
     const bookings = await ClassesBooking.findAll({
       where: {
-        booking_status: "SUCCEED",
         date_booking: {
           [Op.between]: [startOfDay, endOfDay],
         },
