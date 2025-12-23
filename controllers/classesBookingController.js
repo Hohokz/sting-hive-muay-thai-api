@@ -78,9 +78,22 @@ const cancelBooking = async (req, res) => {
     }
 };
 
+const patchBookingNote = async (req, res) => {
+  const { id } = req.params;
+  const { note } = req.body;
+
+  try {
+    const result = await bookingService.updateBookingNote(id, note);
+    return res.status(200).json(result);
+  } catch (error) {
+    handleServiceError(res, error);
+  }
+};
+
 module.exports = {
     createBooking,
     updateBooking,
     getBookings,
-    cancelBooking
+    cancelBooking,
+    patchBookingNote
 };

@@ -9,6 +9,7 @@ router.get('/', bookingController.getBookings);
 // POST /api/v1/bookings
 router.post('/', bookingController.createBooking);
 router.put('/:id', bookingController.updateBooking);
+router.patch('/:id/note', bookingController.patchBookingNote);
 
 // PATCH /api/v1/bookings/:id/cancel
 router.patch('/:id/cancel', bookingController.cancelBooking);
