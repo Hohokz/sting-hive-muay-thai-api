@@ -354,6 +354,33 @@ const updateBooking = async (bookingId, updateData) => {
   }
 };
 
+const updateBookingNote = async (bookingId, note) => {
+  console.log("[Booking Service] Updating note for booking:", bookingId);
+
+  try {
+    // 1. เช็คว่ามีรายการนี้จริงไหม
+    const booking = await ClassesBooking.findByPk(bookingId);
+
+    if (!booking) {
+      const error = new Error("Booking not found.");
+      error.status = 404;
+      throw error;
+    }
+
+    // 2. Update เฉพาะ Note (ไม่ต้องใช้ Transaction เพราะเป็น Operation เดียวที่เรียบง่าย)
+    // และไม่ต้องเช็ค Availability เพราะไม่ได้เปลี่ยนวันหรือจำนวนคน
+    await booking.update({
+      note: note,
+      updated_by: "ADMIN_QUICK_NOTE" // หรือดึงจาก user session ก็ได้ครับ
+    });
+
+    return { success: true, message: "Note updated successfully" };
+  } catch (error) {
+    console.error("[Booking Service] Update Note Error:", error);
+    throw error;
+  }
+};
+
 /**
  * [READ] ดึงข้อมูล Booking (Filter ตาม Schedule หรือ User ได้)
  */
@@ -454,4 +481,5 @@ module.exports = {
   updateBooking,
   getBookings,
   updateBookingStatus,
+  updateBookingNote
 };

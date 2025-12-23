@@ -105,13 +105,19 @@ const getDailyBookingsByDate = async (date) => {
         {
           model: ClassesSchedule,
           as: "schedule",
-          attributes: ["start_time", "end_time", "gym_enum"],
+          attributes: ["id", "start_time", "end_time", "gym_enum"],
         },
       ],
       order: [["date_booking", "ASC"]],
     });
 
-    return bookings;
+    return bookings.map(booking => {
+      const b = booking.toJSON(); // แปลงเป็น JSON ปกติก่อน
+      return {
+        ...b,
+        schedule_id: b.schedule?.id // ดึง ID มาแปะไว้ที่ชั้นนอกสุด
+      };
+    });
   } catch (error) {
     console.error("[Booking Service] Daily Booking Error:", error);
     throw error;
