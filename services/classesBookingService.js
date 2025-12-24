@@ -167,12 +167,14 @@ const sendEmailBookingConfirmation = async (
         emailSubject,
         emailTemplate
       );
-      console.log("✅ Booking email sent:", client_email);
+      console.log("✅ [EMAIL SUCCESS] Confirmation sent to:", client_email);
     } catch (emailError) {
       console.error(
-        "[EMAIL ERROR] Send failed but booking success:",
-        emailError
+        "❌ [EMAIL ERROR] Failed to send email to:", 
+        client_email, 
+        emailError.message
       );
+      throw emailError; // Re-throw to be caught by the service's catch/finally if needed
     }
   }
 };
