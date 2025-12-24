@@ -24,7 +24,11 @@ const sendBookingConfirmationEmail = async (to, subject, html) => {
     });
     console.log("✅ Email sent successfully to:", to);
   } catch (err) {
-    console.error("❌ Email transport error:", err);
+    console.error("❌ Email transport error:");
+    console.error("  From:", process.env.MAIL_FROM);
+    console.error("  To:", to);
+    console.error("  Error message:", err.message);
+    console.error("  Full error:", err);
     throw err; // Rethrow to let the service know it failed
   }
 };

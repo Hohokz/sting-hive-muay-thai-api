@@ -38,7 +38,8 @@ const ClassesBooking = sequelize.define('CLASSES_BOOKING', {
     created_date: { type: DataTypes.DATE(6), allowNull: false, defaultValue: DataTypes.NOW },
     updated_date: { type: DataTypes.DATE(6), allowNull: false, defaultValue: DataTypes.NOW },
     created_by: DataTypes.TEXT,
-    updated_by: DataTypes.TEXT
+    updated_by: DataTypes.TEXT,
+    trainer: DataTypes.TEXT,
 }, { tableName: 'classes_booking', timestamps: false });
 
 module.exports = ClassesBooking;

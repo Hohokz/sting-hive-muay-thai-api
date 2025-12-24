@@ -7,6 +7,7 @@ async function testConnection() {
     console.log("EMAIL_PORT:", process.env.EMAIL_PORT);
     console.log("EMAIL_USER:", process.env.EMAIL_USER);
     console.log("EMAIL_SECURE:", process.env.EMAIL_SECURE);
+    console.log("MAIL_FROM:", process.env.MAIL_FROM);
     
     const secure = process.env.EMAIL_SECURE === "true" || Number(process.env.EMAIL_PORT) === 465;
     console.log("Effective Secure Setting:", secure);
