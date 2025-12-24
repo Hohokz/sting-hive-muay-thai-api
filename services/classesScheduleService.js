@@ -49,7 +49,7 @@ const _validateScheduleInput = (newStartTime, newEndTime, capacity) => {
  * ตรวจสอบว่าช่วงเวลาใหม่ทับซ้อนกับ Schedule ที่มีอยู่หรือไม่
  * ตรรกะการทับซ้อน: (Start1 < End2) AND (End1 > Start2)
  */
-const _checkOverlapByGym = async (newStartTime,newEndTime,gymEnum,excludeId = null, isPrivateClass = false) => {
+const _checkOverlap = async (newStartTime,newEndTime,gymEnum,excludeId = null, isPrivateClass = false) => {
   // ✅ Validate format HH:mm
   const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
@@ -95,10 +95,13 @@ const _checkOverlapByGym = async (newStartTime,newEndTime,gymEnum,excludeId = nu
  */
 const createSchedule = async (scheduleData) => {
     const { start_time, end_time, gym_enum, description, user, capacity, is_private_class } = scheduleData;
-    console.log("Creating schedule with data:", scheduleData);
-    _validateScheduleInput(start_time, end_time, capacity);
+    console.log("--- Service: createSchedule Start ---");
+    console.log("Input data:", JSON.stringify(scheduleData, null, 2));
     
-    const existingOverlap = await _checkOverlapByGym(start_time, end_time, gym_enum, null, is_private_class);
+    _validateScheduleInput(start_time, end_time, capacity);
+    console.log("Validation passed.");
+    
+    const existingOverlap = await _checkOverlap(start_time, end_time, gym_enum, null, is_private_class);
 
     if (existingOverlap) {
         const error = new Error("Time conflict: A schedule already exists in this time slot.");
@@ -138,6 +141,79 @@ const createSchedule = async (scheduleData) => {
         await transaction.rollback();
         console.error("[DB Error] Failed to create schedule and capacity:", error); 
         throw new Error("Internal server error during schedule creation.");
+    }
+};
+
+/**
+ * [UPDATE] อัปเดตรายการ Schedule ที่มีอยู่ พร้อม Capacity
+ */
+const updateSchedule = async (id, updateData) => {
+    const schedule = await ClassesSchedule.findByPk(id, {
+        include: [{ model: ClassesCapacity, as: 'capacity_data' }]
+    });
+
+    if (!schedule) {
+        const error = new Error(`Schedule with ID ${id} not found.`);
+        error.status = 404; // Not Found
+        throw error;
+    }
+    
+    const newStartTimeStr = updateData.start_time || schedule.start_time;
+    const newEndTimeStr = updateData.end_time || schedule.end_time;
+    const newGymEnum = updateData.gym_enum || schedule.gym_enum;
+    const newIsPrivateClass = updateData.is_private_class !== undefined ? updateData.is_private_class : schedule.is_private_class;
+    const currentCapacity = schedule.capacity_data ? schedule.capacity_data.capacity : 0;
+    const newCapacity = updateData.capacity !== undefined ? updateData.capacity : currentCapacity;
+
+    console.log("[Service] updateSchedule validation:", newStartTimeStr, newEndTimeStr, newCapacity);
+
+    // ตรวจสอบความถูกต้องของ Input
+    _validateScheduleInput(newStartTimeStr, newEndTimeStr, newCapacity);
+
+    // ตรวจสอบการทับซ้อน โดยยกเว้น ID ของ Schedule ที่กำลังอัปเดต
+    const existingOverlap = await _checkOverlap(newStartTimeStr, newEndTimeStr, newGymEnum, id, newIsPrivateClass);
+
+    if (existingOverlap) {
+        const error = new Error("Time conflict: The updated time slot overlaps with an existing schedule.");
+        error.status = 409; // Conflict
+        throw error;
+    }
+    
+    const transaction = await ClassesSchedule.sequelize.transaction();
+
+    try {
+        // 1. อัปเดต Schedule Master
+        await schedule.update({
+            ...updateData,
+            start_time: newStartTimeStr,
+            end_time: newEndTimeStr,
+            updated_by: updateData.user || 'API_CALL'
+        }, { transaction });
+        
+        // 2. อัปเดต Capacity ถ้ามีการส่งค่า capacity มา
+        if (updateData.capacity !== undefined) {
+            await ClassesCapacity.update({
+                capacity: updateData.capacity,
+                updated_by: updateData.user || 'API_CALL'
+            }, {
+                where: { classes_id: id },
+                transaction
+            });
+        }
+        
+        await transaction.commit();
+        
+        // ดึงข้อมูลล่าสุดกลับไป
+        return await ClassesSchedule.findByPk(id, {
+            include: [{ model: ClassesCapacity, as: 'capacity_data' }]
+        });
+        
+    } catch (error) {
+        await transaction.rollback();
+        if (error.status) throw error; 
+        
+        console.error("[DB Error] Failed to update schedule and capacity:", error);
+        throw new Error("Internal server error during schedule update.");
     }
 };
 
@@ -264,78 +340,6 @@ const getAvailableSchedulesByBookingDate = async (date, gymEnum, isPrivateClass)
     );
     throw error;
   }
-};
-
-
-
-
-/**
- * [UPDATE] อัปเดตรายการ Schedule ที่มีอยู่ พร้อม Capacity
- */
-const updateSchedule = async (id, updateData) => {
-    const schedule = await ClassesSchedule.findByPk(id, {
-        include: [{ model: ClassesCapacity, as: 'capacity_data' }]
-    });
-
-    if (!schedule) {
-        const error = new Error(`Schedule with ID ${id} not found.`);
-        error.status = 404; // Not Found
-        throw error;
-    }
-    
-    const newStartTime = new Date(updateData.start_time || schedule.start_time);
-    const newEndTime = new Date(updateData.end_time || schedule.end_time);
-    const currentCapacity = schedule.capacity_data ? schedule.capacity_data.capacity : 0;
-    const newCapacity = updateData.capacity !== undefined ? updateData.capacity : currentCapacity;
-
-    // ตรวจสอบความถูกต้องของ Input
-    _validateScheduleInput(newStartTime, newEndTime, newCapacity);
-
-    // ตรวจสอบการทับซ้อน โดยยกเว้น ID ของ Schedule ที่กำลังอัปเดต
-    const existingOverlap = await _checkOverlap(newStartTime, newEndTime, id);
-
-    if (existingOverlap) {
-        const error = new Error("Time conflict: The updated time slot overlaps with an existing schedule.");
-        error.status = 409; // Conflict
-        throw error;
-    }
-    
-    const transaction = await ClassesSchedule.sequelize.transaction();
-
-    try {
-        // 1. อัปเดต Schedule Master
-        await schedule.update({
-            ...updateData,
-            start_time: newStartTime,
-            end_time: newEndTime,
-            updated_by: updateData.user || 'API_CALL'
-        }, { transaction });
-        
-        // 2. อัปเดต Capacity ถ้ามีการส่งค่า capacity มา
-        if (updateData.capacity !== undefined) {
-            await ClassesCapacity.update({
-                capacity: updateData.capacity,
-                updated_by: updateData.user || 'API_CALL'
-            }, {
-                where: { classes_id: id },
-                transaction
-            });
-        }
-        
-        await transaction.commit();
-        
-        // ดึงข้อมูลล่าสุดกลับไป
-        return await ClassesSchedule.findByPk(id, {
-            include: [{ model: ClassesCapacity, as: 'capacity_data' }]
-        });
-        
-    } catch (error) {
-        await transaction.rollback();
-        if (error.status) throw error; 
-        
-        console.error("[DB Error] Failed to update schedule and capacity:", error);
-        throw new Error("Internal server error during schedule update.");
-    }
 };
 
 /**

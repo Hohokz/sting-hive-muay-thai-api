@@ -32,9 +32,11 @@ const handleServiceError = (res, error) => {
 // [CREATE] POST /api/v1/schedules
 const createSchedule = async (req, res) => {
     const { start_time, end_time, gym_enum, capacity } = req.body;
+    console.log("[Controller] createSchedule hit. Body:", req.body);
 
     // 1. Validation ขั้นต้น (Controller Responsibility)
     if (!start_time || !end_time || !gym_enum || capacity === undefined) {
+        console.log("[Controller] Validation failed: Missing required fields");
         return res.status(400).json({ 
             success: false, 
             message: "Missing required fields: start_time, end_time, gym_enum, and capacity are required." 
@@ -43,6 +45,7 @@ const createSchedule = async (req, res) => {
 
     try {
         // 2. เรียกใช้ Service Layer
+        console.log("[Controller] Calling service.createSchedule...");
         const newSchedule = await scheduleService.createSchedule(req.body);
 
         // 3. ส่ง Response สำเร็จ
@@ -53,10 +56,32 @@ const createSchedule = async (req, res) => {
         });
     } catch (error) {
         // 4. จัดการ Error
+        console.error("[Controller] Error in createSchedule:", error.message);
         handleServiceError(res, error);
     }
 };
 
+// [UPDATE] PUT /api/v1/schedules/:id
+const updateSchedule = async (req, res) => {
+    const { id } = req.params;
+    
+    // Validation ขั้นต้น
+    if (!req.body || Object.keys(req.body).length === 0) {
+        return res.status(400).json({ success: false, message: "Request body cannot be empty for update." });
+    }
+
+    try {
+        const updatedSchedule = await scheduleService.updateSchedule(id, req.body);
+        
+        return res.status(200).json({
+            success: true,
+            message: `Schedule ID ${id} updated successfully.`,
+            data: updatedSchedule
+        });
+    } catch (error) {
+        handleServiceError(res, error);
+    }
+};
 // [READ] GET /api/v1/schedules
 const getSchedules = async (req, res) => {
     // รับค่ากรองช่วงเวลาจาก Query parameters
@@ -113,31 +138,6 @@ const getAvailableSchedules = async (req, res) => {
   }
 };
 
-module.exports = {
-  getAvailableSchedules
-};
-
-// [UPDATE] PUT /api/v1/schedules/:id
-const updateSchedule = async (req, res) => {
-    const { id } = req.params;
-    
-    // Validation ขั้นต้น
-    if (!req.body || Object.keys(req.body).length === 0) {
-        return res.status(400).json({ success: false, message: "Request body cannot be empty for update." });
-    }
-
-    try {
-        const updatedSchedule = await scheduleService.updateSchedule(id, req.body);
-        
-        return res.status(200).json({
-            success: true,
-            message: `Schedule ID ${id} updated successfully.`,
-            data: updatedSchedule
-        });
-    } catch (error) {
-        handleServiceError(res, error);
-    }
-};
 
 // [DELETE] DELETE /api/v1/schedules/:id
 const deleteSchedule = async (req, res) => {
