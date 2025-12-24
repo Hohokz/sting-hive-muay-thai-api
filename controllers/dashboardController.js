@@ -2,16 +2,19 @@ const dashboardService = require("../services/dashboardService");
 
 const getDashboardSummary = async (req, res) => {
   try {
-    const summary = await dashboardService.getDashboardSummary();
+    const { date } = req.query;
+    const summary = await dashboardService.getDashboardSummary(date);
 
     res.status(200).json({
       success: true,
       data: summary,
     });
   } catch (error) {
+    console.error("Controller Error:", error);
     res.status(500).json({
       success: false,
       message: "Failed to load dashboard summary",
+      error: error.message // ใส่ไว้เพื่อให้ Debug ง่ายขึ้นในช่วงพัฒนา
     });
   }
 };

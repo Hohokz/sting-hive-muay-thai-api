@@ -12,7 +12,8 @@ const clearSeededData = async () => {
             where: {
                 [Op.or]: [
                     { created_by: 'Seeder' },
-                    { created_by: 'Script' }
+                    { created_by: 'Script' },
+                    {created_by: 'Seeder_V2'}
                 ]
             }
         });

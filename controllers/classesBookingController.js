@@ -90,10 +90,27 @@ const patchBookingNote = async (req, res) => {
   }
 };
 
+const updateBookingTrainer = async (req, res) => {
+  const { id } = req.params;
+  const trainerName = req.body.trainer_name;
+
+  try {
+    const result = await bookingService.updateBookingTrainer(id, trainerName);
+    
+    return res.status(200).json({
+      success: true,
+      message: result.message
+    });
+  } catch (error) {
+    handleServiceError(res, error);
+  }
+};
+
 module.exports = {
     createBooking,
     updateBooking,
     getBookings,
     cancelBooking,
-    patchBookingNote
+    patchBookingNote,
+    updateBookingTrainer
 };

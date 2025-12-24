@@ -2,86 +2,63 @@ const { ClassesBooking, ClassesSchedule } = require("../models/Associations");
 
 const { Op } = require("sequelize");
 
-const getDashboardSummary = async () => {
+const getDashboardSummary = async (targetDate = new Date()) => { // <--- Default เป็นวันปัจจุบัน
   try {
-    const today = new Date();
+    // สร้าง Instance ใหม่เพื่อไม่ให้กระทบกับ Object วันที่ที่ส่งเข้ามา
+    const baseDate = new Date(targetDate);
 
-    const startOfDay = new Date(today.setHours(0, 0, 0, 0));
-    const endOfDay = new Date(today.setHours(23, 59, 59, 999));
+    const startOfDay = new Date(baseDate.setHours(0, 0, 0, 0));
+    const endOfDay = new Date(baseDate.setHours(23, 59, 59, 999));
 
-    const today_booking = await ClassesBooking.count({
-      where: {
-        booking_status: "SUCCEED",
-        date_booking: {
-          [Op.between]: [startOfDay, endOfDay],
-        },
+    // เงื่อนไขพื้นฐานที่ใช้ซ้ำกัน
+    const commonWhere = {
+      booking_status: "SUCCEED",
+      date_booking: {
+        [Op.between]: [startOfDay, endOfDay],
       },
-    });
-    const todayBooking = today_booking;
+    };
 
-    const capacity_today = await ClassesBooking.sum("capacity", {
-      where: {
-        booking_status: "SUCCEED",
-        date_booking: {
-          [Op.between]: [startOfDay, endOfDay],
-        },
-      },
+    // 1. จำนวนจองทั้งหมด
+    const todayBooking = await ClassesBooking.count({
+      where: commonWhere,
     });
 
-    // กัน null
-    const totalCapacityToday = capacity_today || 0;
-
-    
-
-    const capacity_is_not_private_today = await ClassesBooking.sum("capacity", {
-      where: {
-        booking_status: "SUCCEED",
-        date_booking: {
-          [Op.gte]: startOfDay,
-          [Op.lte]: endOfDay,
-        },
-      },
-      include: [
-        {
+    // 2. Capacity รวม (ใช้ Promise.all เพื่อ Query พร้อมกัน)
+    const [totalSum, groupSum, privateSum] = await Promise.all([
+      // ทั้งหมด
+      ClassesBooking.sum("capacity", { where: commonWhere }),
+      
+      // Group Class
+      ClassesBooking.sum("capacity", {
+        where: commonWhere,
+        include: [{
           model: ClassesSchedule,
           as: "schedule",
-          required: true, // ✅ INNER JOIN เท่านั้น
-          where: {
-            is_private_class: false, // ✅ Group Class เท่านั้น
-          },
-          attributes: [], // ✅ กัน GROUP BY พัง
-        },
-      ],
-    });
-    const isNotPrivateCapacity = capacity_is_not_private_today || 0;
+          required: true,
+          where: { is_private_class: false },
+          attributes: [],
+        }],
+      }),
 
-    const capacity_is_private_today = await ClassesBooking.sum("capacity", {
-      where: {
-        booking_status: "SUCCEED",
-        date_booking: {
-          [Op.gte]: startOfDay,
-          [Op.lte]: endOfDay,
-        },
-      },
-      include: [
-        {
+      // Private Class
+      ClassesBooking.sum("capacity", {
+        where: commonWhere,
+        include: [{
           model: ClassesSchedule,
           as: "schedule",
-          required: true, // ✅ INNER JOIN เท่านั้น
-          where: {
-            is_private_class: false, // ✅ Group Class เท่านั้น
-          },
-          attributes: [], // ✅ กัน GROUP BY พัง
-        },
-      ],
-    });
-    const isPrivateCapacity = capacity_is_private_today || 0;
+          required: true,
+          where: { is_private_class: true },
+          attributes: [],
+        }],
+      }),
+    ]);
 
     return {
-      todayBooking,
-      totalCapacityToday,
-      isNotPrivateCapacity,
-      isPrivateCapacity,
+      date: startOfDay,
+      todayBooking: todayBooking || 0,
+      totalCapacityToday: totalSum || 0,
+      isNotPrivateCapacity: groupSum || 0,
+      isPrivateCapacity: privateSum || 0,
     };
   } catch (error) {
     console.error("[DASHBOARD ERROR]:", error);
