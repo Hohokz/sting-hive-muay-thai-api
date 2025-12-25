@@ -11,6 +11,7 @@ router.post('/', bookingController.createBooking);
 router.put('/updateBookingTrainer/:id', bookingController.updateBookingTrainer);
 router.put('/updateBookingNote/:id', bookingController.patchBookingNote);
 router.put('/:id', bookingController.updateBooking);
+router.put('/:id/payment', bookingController.updateBookingPayment);
 
 router.patch('/:id/note', bookingController.patchBookingNote);
 
