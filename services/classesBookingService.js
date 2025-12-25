@@ -108,13 +108,21 @@ const sendEmailBookingConfirmation = async (
   date_booking,
   newBooking,
   classes_schedule_id,
-  update_flag
+  update_flag,
+  capacity,
 ) => {
   const schedule = await getSchedulesById(classes_schedule_id);
   if (!schedule) {
     const error = new Error("Schedule not found.");
     error.status = 404;
     throw error;
+  }
+
+  let location;
+  if('STING_HIVE' === schedule.gym_enum){
+    location = 'Sting Hive Muay Thai Gym';  
+  }else{
+    location = 'Sting Club Muay Thai Gym';
   }
 
   const url = process.env.FRONT_END_URL?.replace(/\/$/, "");
@@ -159,7 +167,9 @@ const sendEmailBookingConfirmation = async (
     )
     .replace("{{help_url}}", `https://stinggym.com/support`)
     .replace("{{location_map}}", `https://maps.google.com`)
-    .replace("{{booking_url}}", `${url}/booking`);
+    .replace("{{booking_url}}", `${url}/booking`)
+    .replace("{{participant}}", capacity)
+    .replace("{{location}}", location);
 
   if (client_email) {
     try {
@@ -199,7 +209,6 @@ const createBooking = async (bookingData) => {
   } = bookingData;
 
   console.log("[Booking Service] Creating booking for:", bookingData);
-
   const transaction = await sequelize.transaction();
   let newBooking = null; // ✅ ต้องอยู่นอก try
 
@@ -231,6 +240,13 @@ const createBooking = async (bookingData) => {
       }
     }
 
+    const schedule = await getSchedulesById(classes_schedule_id); 
+    if (!schedule) {
+      const error = new Error("Schedule not found.");
+      error.status = 404;
+      throw error;
+    }
+
     // 3. Create booking
     newBooking = await ClassesBooking.create(
       {
@@ -246,7 +262,6 @@ const createBooking = async (bookingData) => {
       },
       { transaction }
     );
-
     await transaction.commit();
     return newBooking;
   } catch (error) {
@@ -264,7 +279,8 @@ const createBooking = async (bookingData) => {
           date_booking,
           newBooking,
           classes_schedule_id,
-          "N"
+          "N",
+          capacity,
         );
       } catch (mailErr) {
         console.error("📧 Email send failed:", mailErr);
@@ -348,7 +364,8 @@ const updateBooking = async (bookingId, updateData) => {
           updatedBooking.date_booking,
           updatedBooking,
           updatedBooking.classes_schedule_id,
-          "Y" // ✅ FLAG RESCHEDULE
+          "Y",
+          capacity // ✅ FLAG RESCHEDULE
         );
       } catch (mailErr) {
         console.error("📧 Email send failed:", mailErr);
