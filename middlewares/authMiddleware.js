@@ -19,6 +19,12 @@ exports.authenticateToken = (req, res, next) => {
 
 exports.authorizeRole = (roles) => {
     return (req, res, next) => {
+        console.log('--- Auth Debug ---');
+        console.log('Required Roles:', roles);
+        console.log('User from Token:', req.user);
+        console.log('Check Result:', roles.includes(req.user?.role));
+        console.log('------------------');
+
         if (!req.user || !roles.includes(req.user.role)) {
             return res.status(403).json({ message: 'Access Denied: Insufficient Permissions' });
         }

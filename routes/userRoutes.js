@@ -5,7 +5,7 @@ const { authenticateToken, authorizeRole } = require('../middlewares/authMiddlew
 
 // All routes require authentication and ADMIN role
 router.use(authenticateToken);
-router.use(authorizeRole(['ADMIN']));
+router.use(authorizeRole(['ADMIN', 'USER']));
 
 // CRUD Routes
 router.get('/', userController.getUsers);
