@@ -152,7 +152,7 @@ const sendEmailBookingConfirmation = async (
     .replace("{{class_type}}", is_private ? "Private Class" : "Group Class")
     .replace(
       "{{date_human}}",
-      new Date(date_booking).toLocaleDateString("th-TH", {
+      new Date(date_booking).toLocaleDateString("en-EN", {
         year: "numeric",
         month: "long",
         day: "numeric",
