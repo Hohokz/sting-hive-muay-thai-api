@@ -7,6 +7,7 @@ const bcrypt = require('bcryptjs');
 exports.getAllUsers = async () => {
     try {
         const users = await User.findAll({
+            where :{role : 'USER'},
             attributes: { exclude: ['password'] },
             order: [['created_date', 'DESC']]
         });
