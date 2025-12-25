@@ -1,6 +1,5 @@
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/db');
-const { BOOKING_STATUS } = require('./Enums');
 
 const ClassesBooking = sequelize.define('CLASSES_BOOKING', {
     id: {
@@ -24,7 +23,7 @@ const ClassesBooking = sequelize.define('CLASSES_BOOKING', {
     client_phone: DataTypes.STRING(20),
     booking_status: {
         type: DataTypes.ENUM({
-            values: ['PENDING', 'SUCCEED', 'FAILED', 'CANCELED', 'RESCHEDULED'],
+            values: ['PENDING', 'SUCCEED', 'FAILED', 'CANCELED', 'RESCHEDULED', 'PAYMENTED'],
             type: 'booking_status'
         }), 
         allowNull: false, 

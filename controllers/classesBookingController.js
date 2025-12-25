@@ -106,11 +106,28 @@ const updateBookingTrainer = async (req, res) => {
   }
 };
 
+const updateBookingPayment = async (req, res) => {
+  const { id } = req.params;
+  const payment_status  = req.body.is_paid;
+
+  try {
+    const result = await bookingService.updateBookingPayment(id, payment_status);
+    
+    return res.status(200).json({
+      success: true,
+      message: result.message
+    });
+  } catch (error) {
+    handleServiceError(res, error);
+  }
+};
+
 module.exports = {
     createBooking,
     updateBooking,
     getBookings,
     cancelBooking,
     patchBookingNote,
-    updateBookingTrainer
+    updateBookingTrainer,
+    updateBookingPayment
 };

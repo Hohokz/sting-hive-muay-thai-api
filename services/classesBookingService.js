@@ -9,6 +9,7 @@ const fs = require("fs");
 const path = require("path");
 const { sendBookingConfirmationEmail } = require("../utils/emailService");
 const { getSchedulesById } = require("../services/classesScheduleService");
+const { BOOKING_STATUS } = require("../models/Enums");
 
 // =================================================================
 // HELPER FUNCTIONS
@@ -473,7 +474,6 @@ const updateBookingStatus = async (bookingId, newStatus, user) => {
 
 const updateBookingTrainer = async (bookingId, trainer) => {
   try {
-    console.log(trainer);
     const booking = await ClassesBooking.findByPk(bookingId);
 
     if (!booking) {
@@ -491,11 +491,40 @@ const updateBookingTrainer = async (bookingId, trainer) => {
   }
 };
 
+const updateBookingPayment = async (bookingId, payment_status) => {
+    try {
+      console.log("payment_status", payment_status);
+
+      const booking = await ClassesBooking.findByPk(bookingId);
+
+      if (!booking) {
+          const error = new Error("Booking not found.");
+          error.status = 404;
+          throw error;
+      }
+      if(payment_status){
+        console.log("payment_status is true");
+        await booking.update({ booking_status : 'PAYMENTED' });
+      }else{
+        console.log("payment_status is false");
+        await booking.update({ booking_status : 'SUCCEED' });
+      }
+      
+      console.log("booking", booking);
+      console.log("[Booking Service] Payment status updated successfully");
+      return { success: true, message: "Payment status updated successfully" };
+    } catch (error) {
+        console.error("[Booking Service] Update Payment Error:", error);
+        throw error;
+    }
+};
+
 module.exports = {
   createBooking,
   updateBooking,
   getBookings,
   updateBookingStatus,
   updateBookingNote,
-  updateBookingTrainer
+  updateBookingTrainer,
+  updateBookingPayment
 };
