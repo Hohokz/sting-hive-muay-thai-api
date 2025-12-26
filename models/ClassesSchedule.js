@@ -36,7 +36,11 @@ const ClassesSchedule = sequelize.define('CLASSES_SCHEDULE', {
         type: DataTypes.BOOLEAN,
         allowNull: false,
         defaultValue: false,
-    }
+    },
+    gyms_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+    },
 }, { tableName: 'classes_schedule', timestamps: false });
 
 module.exports = ClassesSchedule;

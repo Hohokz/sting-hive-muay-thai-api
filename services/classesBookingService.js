@@ -208,7 +208,7 @@ const createBooking = async (bookingData) => {
     date_booking,
   } = bookingData;
 
-  console.log("[Booking Service] Creating booking for:", bookingData);
+  
   const transaction = await sequelize.transaction();
   let newBooking = null; // ✅ ต้องอยู่นอก try
 
@@ -259,16 +259,19 @@ const createBooking = async (bookingData) => {
         is_private: is_private || false,
         date_booking,
         created_by: client_name || "CLIENT_APP",
+        gyms_id: schedule.gyms_id,
       },
       { transaction }
     );
     await transaction.commit();
+    
     return newBooking;
   } catch (error) {
     await transaction.rollback();
     console.error("[Booking Service] Create Error:", error);
     throw error; // ✅ ส่ง error จริงกลับไป
   } finally {
+    console.log("[Booking Service] Creating booking for:", newBooking);
     // ✅ ส่งเมลเฉพาะตอนสร้างสำเร็จเท่านั้น
     if (newBooking) {
       try {
@@ -343,6 +346,7 @@ const updateBooking = async (bookingId, updateData) => {
         is_private,
         date_booking,
         updated_by: client_name || "CLIENT_APP",
+        gyms_id: schedule.gyms_id,
       },
       { transaction }
     );

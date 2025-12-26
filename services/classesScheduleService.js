@@ -1,7 +1,8 @@
 // services/classesScheduleService.js
 
-const { ClassesSchedule, ClassesCapacity, ClassesBooking } = require('../models/Associations'); 
-const { Op, Sequelize  } = require('sequelize'); 
+const { Gyms, ClassesSchedule, ClassesCapacity, ClassesBooking, ClassesBookingInAdvance } = require('../models/Associations'); 
+const { Op, Sequelize  } = require('sequelize');
+
 
 // =================================================================
 // 1. HELPER / VALIDATION FUNCTIONS
@@ -100,6 +101,8 @@ const createSchedule = async (scheduleData) => {
     
     _validateScheduleInput(start_time, end_time, capacity);
     console.log("Validation passed.");
+
+    const gyms_id = gym_enum === 'STING_CLUB' ? 1 : 2;
     
     const existingOverlap = await _checkOverlap(start_time, end_time, gym_enum, null, is_private_class);
 
@@ -120,7 +123,8 @@ const createSchedule = async (scheduleData) => {
             gym_enum,
             description,
             is_private_class: is_private_class || false,
-            created_by: user || 'API_CALL'
+            created_by: user || 'API_CALL',
+            gyms_id : gyms_id
         }, { transaction });
 
         // 2. สร้าง Capacity ผูกกับ Schedule
@@ -165,6 +169,8 @@ const updateSchedule = async (id, updateData) => {
     const currentCapacity = schedule.capacity_data ? schedule.capacity_data.capacity : 0;
     const newCapacity = updateData.capacity !== undefined ? updateData.capacity : currentCapacity;
 
+    const gyms_id = newGymEnum === 'STING_CLUB' ? 1 : 2;
+
     console.log("[Service] updateSchedule validation:", newStartTimeStr, newEndTimeStr, newCapacity);
 
     // ตรวจสอบความถูกต้องของ Input
@@ -187,7 +193,8 @@ const updateSchedule = async (id, updateData) => {
             ...updateData,
             start_time: newStartTimeStr,
             end_time: newEndTimeStr,
-            updated_by: updateData.user || 'API_CALL'
+            updated_by: updateData.user || 'API_CALL',
+            gyms_id:gyms_id
         }, { transaction });
         
         // 2. อัปเดต Capacity ถ้ามีการส่งค่า capacity มา
@@ -374,6 +381,108 @@ const deleteSchedule = async (id) => {
         }
         throw new Error("Internal server error during schedule deletion.");
     }
+};
+
+const createAdvancedSchedule = async (scheduleData) => {
+  const gymExist = await Gyms.count({where: {id: scheduleData.gyms_id}});
+  if(!gymExist){
+    const error = new Error(`Gym with ID ${scheduleData.gyms_id} not found.`);
+    error.status = 404; // Not Found
+    throw error;
+  }
+
+  const errorMessage = await _checkAvailability(scheduleData.date, scheduleData.classes_schedule_id, scheduleData.is_close_gyms, scheduleData.capacity, scheduleData.gym_enum);
+
+  try{
+    
+    const transaction = await ClassesBookingInAdvance.sequelize.transaction();
+
+    const schedule = await getSchedulesById(classes_schedule_id); 
+    if (!schedule) {
+      const error = new Error("Schedule not found.");
+      error.status = 404;
+      throw error;
+    }
+
+    
+
+    
+    
+    
+  }catch(error){
+    if (error.status) throw error; 
+    
+    console.error("[DB Error] Failed to create advanced schedule:", error);
+    throw new Error("Internal server error during advanced schedule creation.");
+  }    
+}
+
+const _checkAvailability = async (date ,classesScheduleId, isCloseGyms ,capacity, gymEnum, transaction) => {
+  if(isCloseGyms){
+    return "Gym is closed.";
+  }
+  const schedule = await ClassesSchedule.findByPk(classesScheduleId, {
+    transaction,
+    lock: transaction.LOCK.UPDATE,
+  });
+
+  if (!schedule) {
+    const error = new Error("Class schedule not found.");
+    error.status = 404;
+    throw error;
+  }
+
+  const capacityData = await ClassesCapacity.findOne({
+    where: { classes_id: classes_schedule_id },
+    transaction,
+  });
+
+  if (!capacityData) {
+    const error = new Error("Capacity not found for this class.");
+    error.status = 404;
+    throw error;
+  }
+
+  const startOfDay = new Date(date);
+  startOfDay.setHours(0, 0, 0, 0);
+
+  const endOfDay = new Date(date);
+  endOfDay.setHours(23, 59, 59, 999);
+
+
+const currentBookingCount = await ClassesBooking.sum("capacity", {
+    where: {
+      classes_schedule_id,
+      date_booking: {
+        [Op.between]: [startOfDay, endOfDay],
+      },
+      booking_status: {
+        [Op.notIn]: ["CANCELED", "FAILED"],
+      },
+    },
+    transaction,
+  });
+
+  const usedCapacity = currentBookingCount || 0;
+  const maxCapacity = capacityData.capacity;
+  const totalAfterBooking = usedCapacity + capacity;
+
+  console.log(`REQUEST: ${capacity}`);
+  console.log(`USED: ${usedCapacity}`);
+  console.log(`MAX: ${maxCapacity}`);
+  console.log(`AFTER BOOKING: ${totalAfterBooking}`);
+
+  if (totalAfterBooking > maxCapacity) {
+    const error = `Capacity exceeded: ${usedCapacity}/${maxCapacity} (request ${capacity})`;
+    return error;
+  }
+
+  if (usedCapacity >= maxCapacity) {
+    const error = "This class is fully booked.";
+    return error;
+  }
+
+  return null;
 };
 
 // =================================================================

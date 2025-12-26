@@ -39,6 +39,10 @@ const ClassesBooking = sequelize.define('CLASSES_BOOKING', {
     created_by: DataTypes.TEXT,
     updated_by: DataTypes.TEXT,
     trainer: DataTypes.TEXT,
+    gyms_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+    },
 }, { tableName: 'classes_booking', timestamps: false });
 
 module.exports = ClassesBooking;

@@ -5,9 +5,11 @@ const { sequelize } = require('../config/db');
 // 1. IMPORT โมเดลทั้งหมด (ต้องแน่ใจว่าได้ Import โมเดลอย่างถูกต้อง)
 // -----------------------------------------------------------
 const User = require('./User');
+const Gyms = require('./Gyms');
 const ClassesSchedule = require('./ClassesSchedule');
 const ClassesCapacity = require('./ClassesCapacity')(sequelize); 
 const ClassesBooking = require('./ClassesBooking');
+const ClassesBookingInAdvance = require('./ClassesBookingInAdvance');
 const Payment = require('./Payment');
 
 
@@ -27,6 +29,24 @@ ClassesCapacity.belongsTo(ClassesSchedule, {
     as: 'schedule'               
 });
 
+Gyms.hasMany(ClassesSchedule, {
+    foreignKey: 'gyms_id',
+    as: 'schedules'
+});
+ClassesSchedule.belongsTo(Gyms, {
+    foreignKey: 'gyms_id',
+    as: 'gyms'
+});
+
+Gyms.hasMany(ClassesBooking, {
+    foreignKey: 'gyms_id',
+    as: 'bookings'
+});
+ClassesBooking.belongsTo(Gyms, {
+    foreignKey: 'gyms_id',
+    as: 'gyms'
+});
+
 // B. ClassesSchedule <-> ClassesBooking (One-to-Many)
 // Schedule หนึ่งรายการ สามารถมีการจองหลายรายการ
 ClassesSchedule.hasMany(ClassesBooking, {
@@ -34,6 +54,17 @@ ClassesSchedule.hasMany(ClassesBooking, {
     as: 'bookings'
 });
 ClassesBooking.belongsTo(ClassesSchedule, {
+    foreignKey: 'classes_schedule_id',
+    as: 'schedule'
+});
+
+// B. ClassesSchedule <-> ClassesBookingInAdvance (One-to-Many)
+// Schedule หนึ่งรายการ สามารถมีการจองหลายรายการ
+ClassesSchedule.hasMany(ClassesBookingInAdvance, {
+    foreignKey: 'classes_schedule_id',
+    as: 'bookings_in_advance'
+});
+ClassesBookingInAdvance.belongsTo(ClassesSchedule, {
     foreignKey: 'classes_schedule_id',
     as: 'schedule'
 });
@@ -50,6 +81,7 @@ Payment.belongsTo(ClassesBooking, {
     as: 'booking' 
 });
 
+
 // D. User <-> ClassesBooking (One-to-Many)
 // User (ลูกค้า) หนึ่งคน สามารถจองได้หลายรายการ (ถ้าคุณมีคอลัมน์ user_id ใน ClassesBooking)
 // สมมติว่า ClassesBooking มีคอลัมน์ 'user_id'
@@ -63,8 +95,10 @@ Payment.belongsTo(ClassesBooking, {
 
 module.exports = {
     User,
+    Gyms,
     ClassesSchedule,
     ClassesCapacity,
     ClassesBooking,
+    ClassesBookingInAdvance,
     Payment,
 };
