@@ -1,9 +1,9 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
 
 // นำเข้า Controller Functions ทั้งหมด
 // Assume the controller file is located at '../controllers/classesScheduleController'
-const scheduleController = require('../controllers/classesScheduleController');
+const scheduleController = require("../controllers/classesScheduleController");
 
 // =================================================================
 // 🔗 SCHEDULE ENDPOINTS (API: /api/v1/schedules)
@@ -11,20 +11,36 @@ const scheduleController = require('../controllers/classesScheduleController');
 
 // 1. [READ] GET /api/v1/schedules
 // ดึงข้อมูล Schedule ทั้งหมด หรือตามช่วงเวลา (start_date, end_date ใน Query params)
-router.get('/', scheduleController.getSchedules);
+router.get("/", scheduleController.getSchedules);
 
-router.get('/available', scheduleController.getAvailableSchedules);
+router.get("/available", scheduleController.getAvailableSchedules);
 
 // 2. [CREATE] POST /api/v1/schedules
 // สร้าง Schedule ใหม่ พร้อม Capacity
-router.post('/', scheduleController.createSchedule);
+router.post("/", scheduleController.createSchedule);
 
 // 3. [UPDATE] PUT /api/v1/schedules/:id
 // อัปเดต Schedule และ Capacity ด้วย ID
-router.put('/:id', scheduleController.updateSchedule);
+router.put("/:id", scheduleController.updateSchedule);
 
 // 4. [DELETE] DELETE /api/v1/schedules/:id
 // ลบ Schedule ด้วย ID
-router.delete('/:id', scheduleController.deleteSchedule);
+router.delete("/:id", scheduleController.deleteSchedule);
+
+// 5. [CREATE] POST /api/v1/schedules/in-advance
+// สร้าง/แก้ไข Advance Config
+router.post("/in-advance", scheduleController.createScheduleInAdvance);
+
+// 6. [READ] GET /api/v1/schedules/in-advance
+// อ่าน Advance Config แยกตามประเภท
+router.get("/in-advance", scheduleController.getAdvancedSchedules);
+
+// 7. [UPDATE] PUT /api/v1/schedules/in-advance/:id
+// แก้ไข Advance Config
+router.put("/in-advance/:id", scheduleController.updateAdvancedSchedule);
+
+// 8. [DELETE] DELETE /api/v1/schedules/in-advance/:id
+// ลบ Advance Config
+router.delete("/in-advance/:id", scheduleController.deleteAdvancedSchedule);
 
 module.exports = router;

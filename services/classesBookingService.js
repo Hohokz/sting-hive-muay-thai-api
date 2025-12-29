@@ -2,6 +2,7 @@ const {
   ClassesBooking,
   ClassesSchedule,
   ClassesCapacity,
+  ClassesBookingInAdvance,
 } = require("../models/Associations");
 const { sequelize } = require("../config/db");
 const { Op } = require("sequelize");
@@ -25,15 +26,14 @@ const _checkAvailability = async (
   classes_schedule_id,
   transaction,
   capacity,
-  bookingData
+  bookingData,
+  gyms_id // เพิ่ม parameter สำหรับเช็คปิดยิมทั้งยิม
 ) => {
-  // ✅ 1. LOCK เฉพาะ schedule
+  // ✅ 1. LOCK เฉพาะ schedule (เพื่อความเป็นระเบียบในการเข้าถึง Row นี้)
   const schedule = await ClassesSchedule.findByPk(classes_schedule_id, {
     transaction,
     lock: transaction.LOCK.UPDATE,
   });
-
-  console.log(`bookingData : ${bookingData}`)
 
   if (!schedule) {
     const error = new Error("Class schedule not found.");
@@ -41,25 +41,71 @@ const _checkAvailability = async (
     throw error;
   }
 
-  // ✅ 2. ดึง capacity
-  const capacityData = await ClassesCapacity.findOne({
-    where: { classes_id: classes_schedule_id },
+  // เตรียมวันที่สำหรับค้นหา
+  const targetDate = new Date(bookingData);
+  const startOfDay = new Date(targetDate).setHours(0, 0, 0, 0);
+  const endOfDay = new Date(targetDate).setHours(23, 59, 59, 999);
+
+  // ✅ 1.5 เช็คก่อนว่ายิมปิดทั้งยิมหรือไม่
+  const gymId = gyms_id || schedule.gyms_id;
+  const gymClosed = await ClassesBookingInAdvance.findOne({
+    where: {
+      gyms_id: gymId,
+      is_close_gym: true,
+      classes_schedule_id: null, // ปิดทั้งยิม ไม่ระบุ schedule
+      start_date: { [Op.lte]: targetDate },
+      end_date: { [Op.gte]: targetDate },
+    },
     transaction,
   });
 
-  if (!capacityData) {
-    const error = new Error("Capacity not found for this class.");
-    error.status = 404;
+  if (gymClosed) {
+    const error = new Error("This gym is closed on the selected date.");
+    error.status = 409;
     throw error;
   }
 
-  // ✅ 3. นับ booking ที่ยัง active
-  const startOfDay = new Date(bookingData);
-  startOfDay.setHours(0, 0, 0, 0);
+  // ✅ 2. หา Capacity: เริ่มจากหาใน Advanced Config ก่อน
+  let maxCapacity;
 
-  const endOfDay = new Date(bookingData);
-  endOfDay.setHours(23, 59, 59, 999);
+  const advancedConfig = await ClassesBookingInAdvance.findOne({
+    where: {
+      classes_schedule_id,
+      is_close_gym: false, // เฉพาะ config ที่ไม่ใช่ปิดยิม
+      start_date: { [Op.lte]: targetDate },
+      end_date: { [Op.gte]: targetDate },
+    },
+    transaction,
+  });
 
+  if (advancedConfig) {
+    console.log(`[Check] Using Advanced Capacity: ${advancedConfig.capacity}`);
+    maxCapacity = advancedConfig.capacity;
+
+    // ถ้า Advanced ระบุว่าปิดคลาสนี้ ให้ Error ทันที
+    if (advancedConfig.is_close_gym) {
+      const error = new Error("This class is closed on the selected date.");
+      error.status = 409;
+      throw error;
+    }
+  } else {
+    // ถ้าไม่มี Advanced Config ให้หาใน Capacity ปกติ
+    const capacityData = await ClassesCapacity.findOne({
+      where: { classes_id: classes_schedule_id },
+      transaction,
+    });
+
+    if (!capacityData) {
+      const error = new Error("Capacity not found for this class.");
+      error.status = 404;
+      throw error;
+    }
+
+    console.log(`[Check] Using Standard Capacity: ${capacityData.capacity}`);
+    maxCapacity = capacityData.capacity;
+  }
+
+  // ✅ 3. นับจำนวน Booking ที่มีอยู่ในปัจจุบัน
   const currentBookingCount = await ClassesBooking.sum("capacity", {
     where: {
       classes_schedule_id,
@@ -74,26 +120,26 @@ const _checkAvailability = async (
   });
 
   const usedCapacity = currentBookingCount || 0;
-  const maxCapacity = capacityData.capacity;
   const totalAfterBooking = usedCapacity + capacity;
 
-  console.log(`REQUEST: ${capacity}`);
-  console.log(`USED: ${usedCapacity}`);
-  console.log(`MAX: ${maxCapacity}`);
-  console.log(`AFTER BOOKING: ${totalAfterBooking}`);
+  console.log(`--- Status: ${classes_schedule_id} ---`);
+  console.log(
+    `REQUEST: ${capacity} | USED: ${usedCapacity} | MAX: ${maxCapacity}`
+  );
 
-  // ✅ 4. เช็คว่าจองเกินหรือไม่ (logic ที่ถูกต้อง)
-  if (totalAfterBooking > maxCapacity) {
-    const error = new Error(
-      `Capacity exceeded: ${usedCapacity}/${maxCapacity} (request ${capacity})`
-    );
+  // ✅ 4. ตรวจสอบเงื่อนไข
+  if (usedCapacity >= maxCapacity) {
+    const error = new Error("This class is already fully booked.");
     error.status = 409;
     throw error;
   }
 
-  // ✅ 5. เช็คว่าเต็มพอดีแล้ว (กันเผื่อ edge case)
-  if (usedCapacity >= maxCapacity) {
-    const error = new Error("This class is fully booked.");
+  if (totalAfterBooking > maxCapacity) {
+    const error = new Error(
+      `Capacity exceeded: Only ${
+        maxCapacity - usedCapacity
+      } seats left (Requested ${capacity})`
+    );
     error.status = 409;
     throw error;
   }
@@ -109,7 +155,7 @@ const sendEmailBookingConfirmation = async (
   newBooking,
   classes_schedule_id,
   update_flag,
-  capacity,
+  capacity
 ) => {
   const schedule = await getSchedulesById(classes_schedule_id);
   if (!schedule) {
@@ -119,10 +165,10 @@ const sendEmailBookingConfirmation = async (
   }
 
   let location;
-  if('STING_HIVE' === schedule.gym_enum){
-    location = 'Sting Hive Muay Thai Gym';  
-  }else{
-    location = 'Sting Club Muay Thai Gym';
+  if ("STING_HIVE" === schedule.gym_enum) {
+    location = "Sting Hive Muay Thai Gym";
+  } else {
+    location = "Sting Club Muay Thai Gym";
   }
 
   const url = process.env.FRONT_END_URL?.replace(/\/$/, "");
@@ -181,8 +227,8 @@ const sendEmailBookingConfirmation = async (
       console.log("✅ [EMAIL SUCCESS] Confirmation sent to:", client_email);
     } catch (emailError) {
       console.error(
-        "❌ [EMAIL ERROR] Failed to send email to:", 
-        client_email, 
+        "❌ [EMAIL ERROR] Failed to send email to:",
+        client_email,
         emailError.message
       );
       throw emailError; // Re-throw to be caught by the service's catch/finally if needed
@@ -208,7 +254,6 @@ const createBooking = async (bookingData) => {
     date_booking,
   } = bookingData;
 
-  
   const transaction = await sequelize.transaction();
   let newBooking = null; // ✅ ต้องอยู่นอก try
 
@@ -240,7 +285,7 @@ const createBooking = async (bookingData) => {
       }
     }
 
-    const schedule = await getSchedulesById(classes_schedule_id); 
+    const schedule = await getSchedulesById(classes_schedule_id);
     if (!schedule) {
       const error = new Error("Schedule not found.");
       error.status = 404;
@@ -264,7 +309,7 @@ const createBooking = async (bookingData) => {
       { transaction }
     );
     await transaction.commit();
-    
+
     return newBooking;
   } catch (error) {
     await transaction.rollback();
@@ -283,7 +328,7 @@ const createBooking = async (bookingData) => {
           newBooking,
           classes_schedule_id,
           "N",
-          capacity,
+          capacity
         );
       } catch (mailErr) {
         console.error("📧 Email send failed:", mailErr);
@@ -388,7 +433,7 @@ const updateBookingNote = async (bookingId, note) => {
       throw error;
     }
     await booking.update({
-      admin_note: note
+      admin_note: note,
     });
 
     return { success: true, message: "Note updated successfully" };
@@ -503,7 +548,7 @@ const updateBookingTrainer = async (bookingId, trainer) => {
       throw error;
     }
 
-    await booking.update({ trainer : trainer });
+    await booking.update({ trainer: trainer });
     console.log("[Booking Service] Trainer updated successfully");
     return { success: true, message: "Trainer updated successfully" };
   } catch (error) {
@@ -513,31 +558,31 @@ const updateBookingTrainer = async (bookingId, trainer) => {
 };
 
 const updateBookingPayment = async (bookingId, payment_status) => {
-    try {
-      console.log("payment_status", payment_status);
+  try {
+    console.log("payment_status", payment_status);
 
-      const booking = await ClassesBooking.findByPk(bookingId);
+    const booking = await ClassesBooking.findByPk(bookingId);
 
-      if (!booking) {
-          const error = new Error("Booking not found.");
-          error.status = 404;
-          throw error;
-      }
-      if(payment_status){
-        console.log("payment_status is true");
-        await booking.update({ booking_status : 'PAYMENTED' });
-      }else{
-        console.log("payment_status is false");
-        await booking.update({ booking_status : 'SUCCEED' });
-      }
-      
-      console.log("booking", booking);
-      console.log("[Booking Service] Payment status updated successfully");
-      return { success: true, message: "Payment status updated successfully" };
-    } catch (error) {
-        console.error("[Booking Service] Update Payment Error:", error);
-        throw error;
+    if (!booking) {
+      const error = new Error("Booking not found.");
+      error.status = 404;
+      throw error;
     }
+    if (payment_status) {
+      console.log("payment_status is true");
+      await booking.update({ booking_status: "PAYMENTED" });
+    } else {
+      console.log("payment_status is false");
+      await booking.update({ booking_status: "SUCCEED" });
+    }
+
+    console.log("booking", booking);
+    console.log("[Booking Service] Payment status updated successfully");
+    return { success: true, message: "Payment status updated successfully" };
+  } catch (error) {
+    console.error("[Booking Service] Update Payment Error:", error);
+    throw error;
+  }
 };
 
 module.exports = {
@@ -547,5 +592,5 @@ module.exports = {
   updateBookingStatus,
   updateBookingNote,
   updateBookingTrainer,
-  updateBookingPayment
+  updateBookingPayment,
 };
