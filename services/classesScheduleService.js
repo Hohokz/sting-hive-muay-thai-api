@@ -277,18 +277,34 @@ const getAvailableSchedulesByBookingDate = async (
   try {
     const targetDate = new Date(date);
 
+    // ✅ คำนวณ Start/End of Day ไว้ก่อนเลย เพื่อใช้ในการ Query Advance Config
+    const startOfDay = new Date(targetDate);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(targetDate);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    console.log("--------------- DEBUG AVAILABLE SCHEDULES ---------------");
+    console.log("Input Date:", date);
+    console.log("Target Date:", targetDate.toISOString());
+    console.log("StartOfDay:", startOfDay.toISOString());
+    console.log("EndOfDay:", endOfDay.toISOString());
+    console.log("GymEnum:", gymEnum);
+
     // 1. เช็คก่อนว่ายิมปิดทั้งยิมไหม
+    // ใช้ startOfDay เพื่อให้เวลา (Time component) ไม่ส่งผลต่อการหา (เช่น ส่งมา 03:00 น. แต่ใน DB เก็บ 00:00 น.)
     const gymClosures = await ClassesBookingInAdvance.findAll({
       where: {
         is_close_gym: true,
         classes_schedule_id: null, // ปิดทั้งยิม
-        start_date: { [Op.lte]: targetDate },
-        end_date: { [Op.gte]: targetDate },
+        start_date: { [Op.lte]: startOfDay },
+        end_date: { [Op.gte]: startOfDay },
       },
     });
 
     // สร้าง Set ของ gyms_id ที่ปิด
     const closedGymIds = new Set(gymClosures.map((g) => g.gyms_id));
+    console.log("Found Gym Closures:", gymClosures.length);
+    console.log("Closed Gym IDs:", Array.from(closedGymIds));
 
     // 2. ดึง schedules ทั้งหมด
     const whereSchedule = {};
@@ -312,14 +328,16 @@ const getAvailableSchedulesByBookingDate = async (
       attributes: ["id", "start_time", "end_time", "gyms_id", "gym_enum"],
       order: [["start_time", "ASC"]],
     });
+    console.log("Found Base Schedules:", schedules.length);
 
     // 3. ดึง advance configs ที่ active ในวันนี้
+    // เช่นกัน ใช้ startOfDay ในการ query เพื่อความแม่นยำ
     const advanceConfigs = await ClassesBookingInAdvance.findAll({
       where: {
         classes_schedule_id: { [Op.not]: null }, // เฉพาะ config ที่ระบุ schedule
         is_close_gym: false,
-        start_date: { [Op.lte]: targetDate },
-        end_date: { [Op.gte]: targetDate },
+        start_date: { [Op.lte]: startOfDay },
+        end_date: { [Op.gte]: startOfDay },
       },
     });
 
@@ -329,11 +347,10 @@ const getAvailableSchedulesByBookingDate = async (
       advanceCapacityMap.set(config.classes_schedule_id, config.capacity);
     }
 
+    console.log("advanceCapacityMap", advanceCapacityMap);
+
     // 4. ดึง booking counts สำหรับวันนี้
-    const startOfDay = new Date(targetDate);
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(targetDate);
-    endOfDay.setHours(23, 59, 59, 999);
+    // startOfDay, endOfDay คำนวณไว้ข้างบนแล้ว
 
     const bookingCounts = await ClassesBooking.findAll({
       where: {

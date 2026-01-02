@@ -391,7 +391,6 @@ const updateBooking = async (bookingId, updateData) => {
         is_private,
         date_booking,
         updated_by: client_name || "CLIENT_APP",
-        gyms_id: schedule.gyms_id,
       },
       { transaction }
     );
