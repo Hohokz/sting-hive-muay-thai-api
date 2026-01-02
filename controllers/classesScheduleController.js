@@ -107,6 +107,7 @@ const getSchedules = async (req, res) => {
 
 const getAvailableSchedules = async (req, res) => {
   const { date, gym_enum, is_private_class } = req.query;
+  console.log("[Controller] getAvailableSchedules hit with query:", req.query);
 
   if (!date) {
     return res.status(400).json({
@@ -240,12 +241,10 @@ const updateAdvancedSchedule = async (req, res) => {
 
   // Validation: body cannot be empty
   if (!req.body || Object.keys(req.body).length === 0) {
-    return res
-      .status(400)
-      .json({
-        success: false,
-        message: "Request body cannot be empty for update.",
-      });
+    return res.status(400).json({
+      success: false,
+      message: "Request body cannot be empty for update.",
+    });
   }
 
   try {
