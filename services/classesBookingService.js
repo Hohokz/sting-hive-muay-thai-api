@@ -305,6 +305,7 @@ const createBooking = async (bookingData) => {
         date_booking,
         created_by: client_name || "CLIENT_APP",
         gyms_id: schedule.gyms_id,
+        gyms_enum: schedule.gym_enum
       },
       { transaction }
     );
