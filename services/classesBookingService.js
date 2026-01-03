@@ -27,7 +27,8 @@ const _checkAvailability = async (
   transaction,
   capacity,
   bookingData,
-  gyms_id // เพิ่ม parameter สำหรับเช็คปิดยิมทั้งยิม
+  gyms_id, // เพิ่ม parameter สำหรับเช็คปิดยิมทั้งยิม
+  isUpdate
 ) => {
   // ✅ 1. LOCK เฉพาะ schedule (เพื่อความเป็นระเบียบในการเข้าถึง Row นี้)
   const schedule = await ClassesSchedule.findByPk(classes_schedule_id, {
@@ -120,7 +121,7 @@ const _checkAvailability = async (
   });
 
   const usedCapacity = currentBookingCount || 0;
-  const totalAfterBooking = usedCapacity + capacity;
+  const totalAfterBooking = isUpdat ? usedCapacity + capacity : usedCapacity;
 
   console.log(`--- Status: ${classes_schedule_id} ---`);
   console.log(
@@ -205,7 +206,7 @@ const sendEmailBookingConfirmation = async (
       })
     )
     .replace("{{time_human}}", `${schedule.start_time} - ${schedule.end_time}`)
-    .replace("{{location}}", "Sting Club Muay Thai Gym")
+    .replace("{{location}}", location)
     .replace("{{trainer_name}}", "Sting Coach")
     .replace(
       "{{action_url}}",
@@ -263,7 +264,8 @@ const createBooking = async (bookingData) => {
       classes_schedule_id,
       transaction,
       capacity,
-      date_booking
+      date_booking,
+      false
     );
 
     // 2. กันจองซ้ำ
@@ -378,7 +380,8 @@ const updateBooking = async (bookingId, updateData) => {
         classes_schedule_id,
         transaction,
         capacity,
-        date_booking
+        date_booking,
+        true
       );
     }
 
