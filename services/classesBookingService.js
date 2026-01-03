@@ -121,7 +121,7 @@ const _checkAvailability = async (
   });
 
   const usedCapacity = currentBookingCount || 0;
-  const totalAfterBooking = isUpdat ? usedCapacity + capacity : usedCapacity;
+  const totalAfterBooking = isUpdate ? usedCapacity + capacity : usedCapacity;
 
   console.log(`--- Status: ${classes_schedule_id} ---`);
   console.log(
