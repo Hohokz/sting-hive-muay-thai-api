@@ -2,7 +2,8 @@ const { ClassesBooking, ClassesSchedule } = require("../models/Associations");
 
 const { Op } = require("sequelize");
 
-const getDashboardSummary = async (targetDate = new Date()) => { // <--- Default เป็นวันปัจจุบัน
+const getDashboardSummary = async (targetDate = new Date()) => {
+  // <--- Default เป็นวันปัจจุบัน
   try {
     // สร้าง Instance ใหม่เพื่อไม่ให้กระทบกับ Object วันที่ที่ส่งเข้ามา
     const baseDate = new Date(targetDate);
@@ -27,29 +28,33 @@ const getDashboardSummary = async (targetDate = new Date()) => { // <--- Default
     const [totalSum, groupSum, privateSum] = await Promise.all([
       // ทั้งหมด
       ClassesBooking.sum("capacity", { where: commonWhere }),
-      
+
       // Group Class
       ClassesBooking.sum("capacity", {
         where: commonWhere,
-        include: [{
-          model: ClassesSchedule,
-          as: "schedule",
-          required: true,
-          where: { is_private_class: false },
-          attributes: [],
-        }],
+        include: [
+          {
+            model: ClassesSchedule,
+            as: "schedule",
+            required: true,
+            where: { is_private_class: false },
+            attributes: [],
+          },
+        ],
       }),
 
       // Private Class
       ClassesBooking.sum("capacity", {
         where: commonWhere,
-        include: [{
-          model: ClassesSchedule,
-          as: "schedule",
-          required: true,
-          where: { is_private_class: true },
-          attributes: [],
-        }],
+        include: [
+          {
+            model: ClassesSchedule,
+            as: "schedule",
+            required: true,
+            where: { is_private_class: true },
+            attributes: [],
+          },
+        ],
       }),
     ]);
 
@@ -69,8 +74,15 @@ const getDashboardSummary = async (targetDate = new Date()) => { // <--- Default
 const getDailyBookingsByDate = async (date) => {
   try {
     // แปลง YYYY-MM-DD → ช่วงเวลาของวันนั้น
-    const startOfDay = new Date(`${date}T00:00:00.000Z`);
-    const endOfDay = new Date(`${date}T23:59:59.999Z`);
+    const dayjs = require("dayjs");
+    const utc = require("dayjs/plugin/utc");
+    const timezone = require("dayjs/plugin/timezone");
+
+    dayjs.extend(utc);
+    dayjs.extend(timezone);
+
+    const startOfDay = dayjs.tz(date, "Asia/Bangkok").startOf("day").toDate();
+    const endOfDay = dayjs.tz(date, "Asia/Bangkok").endOf("day").toDate();
 
     const bookings = await ClassesBooking.findAll({
       where: {
@@ -88,11 +100,11 @@ const getDailyBookingsByDate = async (date) => {
       order: [["date_booking", "ASC"]],
     });
 
-    return bookings.map(booking => {
+    return bookings.map((booking) => {
       const b = booking.toJSON(); // แปลงเป็น JSON ปกติก่อน
       return {
         ...b,
-        schedule_id: b.schedule?.id // ดึง ID มาแปะไว้ที่ชั้นนอกสุด
+        schedule_id: b.schedule?.id, // ดึง ID มาแปะไว้ที่ชั้นนอกสุด
       };
     });
   } catch (error) {
@@ -103,5 +115,5 @@ const getDailyBookingsByDate = async (date) => {
 
 module.exports = {
   getDashboardSummary,
-  getDailyBookingsByDate
+  getDailyBookingsByDate,
 };
