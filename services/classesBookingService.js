@@ -120,8 +120,10 @@ const _checkAvailability = async (
     transaction,
   });
 
-  const usedCapacity = currentBookingCount || 0;
-  const totalAfterBooking = isUpdate ? usedCapacity + capacity : usedCapacity;
+  const usedCapacity = isUpdate
+    ? currentBookingCount - capacity
+    : currentBookingCount || 0;
+  const totalAfterBooking = usedCapacity + capacity;
 
   console.log(`--- Status: ${classes_schedule_id} ---`);
   console.log(
@@ -265,6 +267,7 @@ const createBooking = async (bookingData) => {
       transaction,
       capacity,
       date_booking,
+      null,
       false
     );
 
@@ -280,7 +283,7 @@ const createBooking = async (bookingData) => {
         transaction,
       });
 
-      if (existingBooking) {
+      if (existingBooking && client_email !== "Stingcluboffice@gmail.com") {
         const error = new Error("You have already booked this class.");
         error.status = 409;
         throw error;
@@ -307,7 +310,7 @@ const createBooking = async (bookingData) => {
         date_booking,
         created_by: client_name || "CLIENT_APP",
         gyms_id: schedule.gyms_id,
-        gyms_enum: schedule.gym_enum
+        gyms_enum: schedule.gym_enum,
       },
       { transaction }
     );
@@ -381,6 +384,7 @@ const updateBooking = async (bookingId, updateData) => {
         transaction,
         capacity,
         date_booking,
+        null,
         true
       );
     }
@@ -505,7 +509,13 @@ const updateBookingStatus = async (bookingId, newStatus, user) => {
       noSeatStatuses.includes(oldStatus) &&
       needSeatStatuses.includes(newStatus)
     ) {
-      await _checkAvailability(booking.classes_schedule_id, transaction);
+      await _checkAvailability(
+        booking.classes_schedule_id,
+        transaction,
+        null,
+        null,
+        false
+      );
     }
 
     updatedBooking = await booking.update(

@@ -8,7 +8,7 @@ const { startMonthlyArchivalJob } = require("./job/monthlyArchivalJob");
 
 const app = express();
 const NODE_ENV = process.env.NODE_ENV || "development";
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 3000;
 
 let isDbConnected = false;
 
@@ -24,7 +24,7 @@ const allowedOrigins = [
   "http://localhost:5173",
   "https://sting-hive-muay-thai-web.vercel.app",
   "https://expert-space-giggle-jvqg649wp66cqrjq-5173.app.github.dev",
-  "https://bookish-fishstick-qjpxr96g54wf9p9p-5173.app.github.dev" // ✅ เพิ่มตัวล่าสุดเข้าไป
+  "https://bookish-fishstick-qjpxr96g54wf9p9p-5173.app.github.dev", // ✅ เพิ่มตัวล่าสุดเข้าไป
 ];
 
 app.use(
@@ -34,20 +34,19 @@ app.use(
       // 2. อนุญาตถ้าอยู่ใน list allowedOrigins
       // 3. ✅ เทคนิคพิเศษ: ถ้าเป็น codespaces (ลงท้ายด้วย app.github.dev) ให้อนุญาตเลยในช่วง dev
       if (
-        !origin || 
-        allowedOrigins.includes(origin) || 
+        !origin ||
+        allowedOrigins.includes(origin) ||
         origin.endsWith(".app.github.dev") // 🔥 เพิ่มบรรทัดนี้ จะได้ไม่ต้องคอยแก้ URL บ่อยๆ
       ) {
         return callback(null, true);
       }
-      
+
       console.error(`CORS Error: Origin ${origin} not allowed`); // พ่น log บอกหน่อยว่าตัวไหนที่ติด
       callback(new Error("Not allowed by CORS"), false);
     },
     credentials: true,
   })
 );
-
 
 app.use(express.json());
 
