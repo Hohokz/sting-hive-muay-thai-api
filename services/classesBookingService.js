@@ -25,12 +25,13 @@ const { BOOKING_STATUS } = require("../models/Enums");
 const _checkAvailability = async (
   classes_schedule_id,
   transaction,
-  capacity,
+  capacity, // 🟢 ยอดใหม่ที่ลูกค้า "ขอจอง" (Requested Seats)
+  newBookingCapacity, // 🔴 ยอดเก่าที่ลูกค้า "เคยจองไว้" (Previous Qty) -> ชื่อตัวแปรอาจชวนงง แต่ตาม Context คือยอดเก่า
   bookingData,
-  gyms_id, // เพิ่ม parameter สำหรับเช็คปิดยิมทั้งยิม
+  gyms_id,
   isUpdate
 ) => {
-  // ✅ 1. LOCK เฉพาะ schedule (เพื่อความเป็นระเบียบในการเข้าถึง Row นี้)
+  // ✅ 1. LOCK เฉพาะ schedule
   const schedule = await ClassesSchedule.findByPk(classes_schedule_id, {
     transaction,
     lock: transaction.LOCK.UPDATE,
@@ -42,7 +43,6 @@ const _checkAvailability = async (
     throw error;
   }
 
-  // เตรียมวันที่สำหรับค้นหา
   const targetDate = new Date(bookingData);
   const startOfDay = new Date(targetDate).setHours(0, 0, 0, 0);
   const endOfDay = new Date(targetDate).setHours(23, 59, 59, 999);
@@ -53,7 +53,7 @@ const _checkAvailability = async (
     where: {
       gyms_id: gymId,
       is_close_gym: true,
-      classes_schedule_id: null, // ปิดทั้งยิม ไม่ระบุ schedule
+      classes_schedule_id: null,
       start_date: { [Op.lte]: targetDate },
       end_date: { [Op.gte]: targetDate },
     },
@@ -66,13 +66,13 @@ const _checkAvailability = async (
     throw error;
   }
 
-  // ✅ 2. หา Capacity: เริ่มจากหาใน Advanced Config ก่อน
+  // ✅ 2. หา Max Capacity (Advanced -> Normal)
   let maxCapacity;
 
   const advancedConfig = await ClassesBookingInAdvance.findOne({
     where: {
       classes_schedule_id,
-      is_close_gym: false, // เฉพาะ config ที่ไม่ใช่ปิดยิม
+      is_close_gym: false,
       start_date: { [Op.lte]: targetDate },
       end_date: { [Op.gte]: targetDate },
     },
@@ -83,14 +83,13 @@ const _checkAvailability = async (
     console.log(`[Check] Using Advanced Capacity: ${advancedConfig.capacity}`);
     maxCapacity = advancedConfig.capacity;
 
-    // ถ้า Advanced ระบุว่าปิดคลาสนี้ ให้ Error ทันที
+    // Note: ตรงนี้ advancedConfig query มาแบบ is_close_gym: false อยู่แล้ว เงื่อนไขนี้อาจจะไม่จำเป็นต้องเช็คซ้ำ แต่ใส่ไว้ไม่เสียหาย
     if (advancedConfig.is_close_gym) {
       const error = new Error("This class is closed on the selected date.");
       error.status = 409;
       throw error;
     }
   } else {
-    // ถ้าไม่มี Advanced Config ให้หาใน Capacity ปกติ
     const capacityData = await ClassesCapacity.findOne({
       where: { classes_id: classes_schedule_id },
       transaction,
@@ -104,37 +103,56 @@ const _checkAvailability = async (
     maxCapacity = capacityData.capacity;
   }
 
-  // ✅ 3. นับจำนวน Booking ที่มีอยู่ในปัจจุบัน
-  const currentBookingCount = await ClassesBooking.sum("capacity", {
-    where: {
-      classes_schedule_id,
-      date_booking: {
-        [Op.between]: [startOfDay, endOfDay],
+  // ✅ 3. นับจำนวน Booking ที่มีอยู่ในปัจจุบัน (รวมของเราด้วย ถ้าเป็นการ Update)
+  const currentBookingCount =
+    (await ClassesBooking.sum("capacity", {
+      where: {
+        classes_schedule_id,
+        date_booking: {
+          [Op.between]: [startOfDay, endOfDay],
+        },
+        booking_status: {
+          [Op.notIn]: ["CANCELED", "FAILED"],
+        },
       },
-      booking_status: {
-        [Op.notIn]: ["CANCELED", "FAILED"],
-      },
-    },
-    transaction,
-  });
+      transaction,
+    })) || 0; // ใส่ || 0 กันเหนียวเผื่อ return null
 
-  const usedCapacity = isUpdate
-    ? currentBookingCount - capacity
-    : currentBookingCount || 0;
-  const totalAfterBooking = usedCapacity + capacity;
+  // ✅ 4. คำนวณความถูกต้อง (Fixed Logic)
+  // -------------------------------------------------------------
+  // ระบุจำนวนที่จองไว้เดิม (My Old Qty)
+  // ถ้า isUpdate = true ให้ใช้ค่า newBookingCapacity (ที่เป็นค่าเก่าจาก DB)
+  const previousQty = isUpdate ? newBookingCapacity : 0;
 
-  // ✅ 4. ตรวจสอบเงื่อนไข
-  if (usedCapacity >= maxCapacity) {
-    const error = new Error("This class is already fully booked.");
-    error.status = 409;
-    throw error;
-  }
+  // ระบุจำนวนที่ขอใหม่ (My New Request)
+  const requestedSeats = capacity;
+
+  // คำนวณที่นั่งที่ถูกคนอื่นแย่งไปแล้ว (Seats taken by others)
+  // สูตร: ยอดรวมใน DB - ยอดเก่าของเรา (ตัดของเราออกไปก่อน)
+  // ใช้ Math.max(0) เพื่อป้องกันค่าติดลบ หาก DB มี data ผิดพลาด (Overbook)
+  const seatsTakenByOthers = Math.max(0, currentBookingCount - previousQty);
+
+  // คำนวณยอดรวมสุทธิ หากยอมให้ทำรายการนี้ (Total after this booking)
+  // สูตร: ที่นั่งคนอื่น + ที่นั่งใหม่ที่เราขอ
+  const totalAfterBooking = seatsTakenByOthers + requestedSeats;
+  // -------------------------------------------------------------
+
+  console.log("----------------Debug Capacity----------------");
+  console.log("Date:", targetDate.toISOString().split("T")[0]);
+  console.log("Current DB Count (Total):", currentBookingCount);
+  console.log("My Old Qty (To remove):", previousQty);
+  console.log("Seats taken by others (Calculated):", seatsTakenByOthers);
+  console.log("My New Request (To add):", requestedSeats);
+  console.log("Total after this booking:", totalAfterBooking);
+  console.log("Max Capacity:", maxCapacity);
+  console.log("----------------------------------------------");
 
   if (totalAfterBooking > maxCapacity) {
+    // คำนวณที่นั่งที่เหลือจริงๆ ให้ User เห็น (Max - คนอื่นจอง)
+    const remainingSeats = Math.max(0, maxCapacity - seatsTakenByOthers);
+
     const error = new Error(
-      `Capacity exceeded: Only ${
-        maxCapacity - usedCapacity
-      } seats left (Requested ${capacity})`
+      `Capacity exceeded: Only ${remainingSeats} seats left (Requested ${requestedSeats})`
     );
     error.status = 409;
     throw error;
@@ -259,6 +277,7 @@ const createBooking = async (bookingData) => {
       classes_schedule_id,
       transaction,
       capacity,
+      0,
       date_booking,
       null,
       false
@@ -371,6 +390,7 @@ const updateBooking = async (bookingId, updateData) => {
       await _checkAvailability(
         classes_schedule_id,
         transaction,
+        booking.capacity,
         capacity,
         date_booking,
         null,
@@ -510,6 +530,7 @@ const updateBookingStatus = async (bookingId, newStatus, user) => {
       await _checkAvailability(
         booking.classes_schedule_id,
         transaction,
+        null,
         null,
         null,
         false
