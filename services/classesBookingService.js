@@ -101,8 +101,6 @@ const _checkAvailability = async (
       error.status = 404;
       throw error;
     }
-
-    console.log(`[Check] Using Standard Capacity: ${capacityData.capacity}`);
     maxCapacity = capacityData.capacity;
   }
 
@@ -124,11 +122,6 @@ const _checkAvailability = async (
     ? currentBookingCount - capacity
     : currentBookingCount || 0;
   const totalAfterBooking = usedCapacity + capacity;
-
-  console.log(`--- Status: ${classes_schedule_id} ---`);
-  console.log(
-    `REQUEST: ${capacity} | USED: ${usedCapacity} | MAX: ${maxCapacity}`
-  );
 
   // ✅ 4. ตรวจสอบเงื่อนไข
   if (usedCapacity >= maxCapacity) {
@@ -322,7 +315,6 @@ const createBooking = async (bookingData) => {
     console.error("[Booking Service] Create Error:", error);
     throw error; // ✅ ส่ง error จริงกลับไป
   } finally {
-    console.log("[Booking Service] Creating booking for:", newBooking);
     // ✅ ส่งเมลเฉพาะตอนสร้างสำเร็จเท่านั้น
     if (newBooking) {
       try {
@@ -346,6 +338,7 @@ const createBooking = async (bookingData) => {
 
 const updateBooking = async (bookingId, updateData) => {
   const {
+    classes_schedule_id,
     client_name,
     client_email,
     client_phone,
@@ -369,15 +362,11 @@ const updateBooking = async (bookingId, updateData) => {
       throw error;
     }
 
-    const classes_schedule_id = booking.classes_schedule_id;
-
     // 2. ถ้ามีการเปลี่ยน capacity หรือ date → ต้องเช็คที่นั่งใหม่
-    console.log(
-      `capacity : ${capacity}, booking.capacity : ${booking.capacity}, date_booking : ${booking.capacity}, booking.date_booking : ${booking.date_booking}`
-    );
     if (
       capacity !== booking.capacity ||
-      date_booking !== booking.date_booking
+      date_booking !== booking.date_booking ||
+      classes_schedule_id !== booking.classes_schedule_id
     ) {
       await _checkAvailability(
         classes_schedule_id,
@@ -389,15 +378,24 @@ const updateBooking = async (bookingId, updateData) => {
       );
     }
 
+    const schedule = await getSchedulesById(classes_schedule_id);
+    if (!schedule) {
+      const error = new Error("Schedule not found.");
+      error.status = 404;
+      throw error;
+    }
     // 4. Update
     updatedBooking = await booking.update(
       {
+        classes_schedule_id,
         client_name,
         client_email,
         client_phone,
         capacity,
         is_private,
         date_booking,
+        gyms_id: schedule.gyms_id,
+        gyms_enum: schedule.gym_enum,
         updated_by: client_name || "CLIENT_APP",
       },
       { transaction }
@@ -572,25 +570,17 @@ const updateBookingTrainer = async (bookingId, trainer) => {
 
 const updateBookingPayment = async (bookingId, payment_status) => {
   try {
-    console.log("payment_status", payment_status);
-
     const booking = await ClassesBooking.findByPk(bookingId);
-
     if (!booking) {
       const error = new Error("Booking not found.");
       error.status = 404;
       throw error;
     }
     if (payment_status) {
-      console.log("payment_status is true");
       await booking.update({ booking_status: "PAYMENTED" });
     } else {
-      console.log("payment_status is false");
       await booking.update({ booking_status: "SUCCEED" });
     }
-
-    console.log("booking", booking);
-    console.log("[Booking Service] Payment status updated successfully");
     return { success: true, message: "Payment status updated successfully" };
   } catch (error) {
     console.error("[Booking Service] Update Payment Error:", error);
