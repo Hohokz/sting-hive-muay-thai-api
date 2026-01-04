@@ -118,34 +118,36 @@ const _checkAvailability = async (
       transaction,
     })) || 0; // ใส่ || 0 กันเหนียวเผื่อ return null
 
-  // ✅ 4. คำนวณความถูกต้อง (Fixed Logic)
+  // ✅ 4. แก้ไขการ Map ตัวแปร (สลับให้ตรงกับที่ส่งมา)
   // -------------------------------------------------------------
-  // ระบุจำนวนที่จองไว้เดิม (My Old Qty)
-  // ถ้า isUpdate = true ให้ใช้ค่า newBookingCapacity (ที่เป็นค่าเก่าจาก DB)
-  const previousQty = isUpdate ? newBookingCapacity : 0;
 
-  // ระบุจำนวนที่ขอใหม่ (My New Request)
-  const requestedSeats = capacity;
+  // ยอดเดิมใน DB (Previous/Old):
+  // จาก Log ตัวแปร 'capacity' ดูเหมือนจะเก็บค่าเดิม (1) อยู่
+  const previousQty = isUpdate ? capacity : 0;
 
-  // คำนวณที่นั่งที่ถูกคนอื่นแย่งไปแล้ว (Seats taken by others)
-  // สูตร: ยอดรวมใน DB - ยอดเก่าของเรา (ตัดของเราออกไปก่อน)
-  // ใช้ Math.max(0) เพื่อป้องกันค่าติดลบ หาก DB มี data ผิดพลาด (Overbook)
+  // ยอดใหม่ที่ขอจอง (Requested/New):
+  // จาก Log ตัวแปร 'newBookingCapacity' คือค่าใหม่ที่คุณส่งมา (2)
+  const requestedSeats = newBookingCapacity;
+
+  // -------------------------------------------------------------
+
+  // คำนวณที่นั่งที่ถูกคนอื่นแย่งไปแล้ว
+  // สูตร: ยอดรวมใน DB - ยอดเก่าของเรา
   const seatsTakenByOthers = Math.max(0, currentBookingCount - previousQty);
 
-  // คำนวณยอดรวมสุทธิ หากยอมให้ทำรายการนี้ (Total after this booking)
-  // สูตร: ที่นั่งคนอื่น + ที่นั่งใหม่ที่เราขอ
+  // คำนวณยอดรวมสุทธิ (ที่นั่งคนอื่น + ที่นั่งใหม่ที่เราขอ)
   const totalAfterBooking = seatsTakenByOthers + requestedSeats;
+
   // -------------------------------------------------------------
 
-  console.log("----------------Debug Capacity----------------");
-  console.log("Date:", targetDate.toISOString().split("T")[0]);
-  console.log("Current DB Count (Total):", currentBookingCount);
-  console.log("My Old Qty (To remove):", previousQty);
-  console.log("Seats taken by others (Calculated):", seatsTakenByOthers);
-  console.log("My New Request (To add):", requestedSeats);
-  console.log("Total after this booking:", totalAfterBooking);
-  console.log("Max Capacity:", maxCapacity);
-  console.log("----------------------------------------------");
+  console.log("----------------Debug Capacity (Fixed Swap)----------------");
+  console.log("Current DB Count (Total):", currentBookingCount); // 1
+  console.log("My Old Qty (To remove):", previousQty); // ควรเป็น 1 (ค่าเดิม)
+  console.log("Seats taken by others:", seatsTakenByOthers); // ควรเป็น 0 (1-1)
+  console.log("My New Request (To add):", requestedSeats); // ควรเป็น 2 (ค่าใหม่)
+  console.log("Total after this booking:", totalAfterBooking); // ควรเป็น 2 (0+2)
+  console.log("Max Capacity:", maxCapacity); // 1
+  console.log("-----------------------------------------------------------");
 
   if (totalAfterBooking > maxCapacity) {
     // คำนวณที่นั่งที่เหลือจริงๆ ให้ User เห็น (Max - คนอื่นจอง)
