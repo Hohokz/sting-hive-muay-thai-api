@@ -3,6 +3,7 @@ const {
   ClassesSchedule,
   ClassesCapacity,
   ClassesBookingInAdvance,
+  User,
 } = require("../models/Associations");
 const { sequelize } = require("../config/db");
 const { Op } = require("sequelize");
@@ -10,6 +11,7 @@ const fs = require("fs");
 const path = require("path");
 const { sendBookingConfirmationEmail } = require("../utils/emailService");
 const { getSchedulesById } = require("../services/classesScheduleService");
+
 const { BOOKING_STATUS } = require("../models/Enums");
 
 // =================================================================
@@ -268,6 +270,7 @@ const createBooking = async (bookingData) => {
     capacity,
     is_private,
     date_booking,
+    trainer,
   } = bookingData;
 
   const transaction = await sequelize.transaction();
@@ -325,6 +328,7 @@ const createBooking = async (bookingData) => {
         created_by: client_name || "CLIENT_APP",
         gyms_id: schedule.gyms_id,
         gyms_enum: schedule.gym_enum,
+        trainer: trainer || "",
       },
       { transaction }
     );
@@ -366,7 +370,10 @@ const updateBooking = async (bookingId, updateData) => {
     capacity,
     is_private,
     date_booking,
+    trainer,
   } = updateData;
+
+  console.log("UPDATE DATA", updateData);
 
   console.log("[Booking Service] Updating booking:", bookingId, updateData);
 
@@ -418,6 +425,7 @@ const updateBooking = async (bookingId, updateData) => {
         date_booking,
         gyms_id: schedule.gyms_id,
         gyms_enum: schedule.gym_enum,
+        trainer,
         updated_by: client_name || "CLIENT_APP",
       },
       { transaction }
@@ -611,6 +619,23 @@ const updateBookingPayment = async (bookingId, payment_status) => {
   }
 };
 
+const getTrainerForRequest = async () => {
+  try {
+    console.log("[Booking Service] Getting trainers...");
+    const trainers = await User.findAll({
+      where: { role: "USER" },
+      attributes: { exclude: ["password"] },
+      order: [["created_date", "DESC"]],
+    });
+    console.log(trainers);
+    console.log("[Booking Service] Trainers fetched successfully");
+    return trainers;
+  } catch (error) {
+    console.error("[Booking Service] Error fetching trainers:", error);
+    throw new Error(`Error fetching trainers: ${error.message}`);
+  }
+};
+
 module.exports = {
   createBooking,
   updateBooking,
@@ -619,4 +644,5 @@ module.exports = {
   updateBookingNote,
   updateBookingTrainer,
   updateBookingPayment,
+  getTrainerForRequest,
 };

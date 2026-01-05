@@ -1,21 +1,24 @@
 // routes/classesBookingRoutes.js
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const bookingController = require('../controllers/classesBookingController');
+const bookingController = require("../controllers/classesBookingController");
 
 // GET /api/v1/bookings?classes_schedule_id=...
-router.get('/', bookingController.getBookings);
+router.get("/", bookingController.getBookings);
 
 // POST /api/v1/bookings
-router.post('/', bookingController.createBooking);
-router.put('/updateBookingTrainer/:id', bookingController.updateBookingTrainer);
-router.put('/updateBookingNote/:id', bookingController.patchBookingNote);
-router.put('/:id', bookingController.updateBooking);
-router.put('/:id/payment', bookingController.updateBookingPayment);
+router.post("/", bookingController.createBooking);
+router.put("/updateBookingTrainer/:id", bookingController.updateBookingTrainer);
+router.put("/updateBookingNote/:id", bookingController.patchBookingNote);
+router.put("/:id", bookingController.updateBooking);
+router.put("/:id/payment", bookingController.updateBookingPayment);
 
-router.patch('/:id/note', bookingController.patchBookingNote);
+router.patch("/:id/note", bookingController.patchBookingNote);
 
 // PATCH /api/v1/bookings/:id/cancel
-router.patch('/:id/cancel', bookingController.cancelBooking);
+router.patch("/:id/cancel", bookingController.cancelBooking);
+
+// GET /api/v1/bookings/trainers
+router.get("/trainers", bookingController.getTrainerForRequest);
 
 module.exports = router;
