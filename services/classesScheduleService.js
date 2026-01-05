@@ -373,37 +373,35 @@ const getAvailableSchedulesByBookingDate = async (
 
     // 5. Filter และ map ผลลัพธ์
     const availableSchedules = [];
-
+    console.log("closedGymIds", closedGymIds);
     for (const schedule of schedules) {
-      // Skip ถ้ายิมปิด
       if (closedGymIds.has(schedule.gyms_id)) {
         continue;
       }
 
-      // หา capacity (advance config หรือ default)
       const maxCapacity = advanceCapacityMap.has(schedule.id)
         ? advanceCapacityMap.get(schedule.id)
         : schedule.capacity_data?.capacity || 0;
 
-      // หา booked count
       const bookedCount = bookedMap.get(schedule.id) || 0;
 
-      // เช็คว่ายังมีที่ว่างไหม
-      if (bookedCount < maxCapacity) {
-        availableSchedules.push({
-          id: schedule.id,
-          start_time: schedule.start_time,
-          end_time: schedule.end_time,
-          gym_enum: schedule.gym_enum,
-          gyms_id: schedule.gyms_id,
-          capacity_data: {
-            id: schedule.capacity_data?.id,
-            capacity: maxCapacity, // ใช้ capacity จาก advance config ถ้ามี
-          },
-          booking_count: bookedCount,
-          available_seats: maxCapacity - bookedCount,
-        });
-      }
+      // ✅ เอา if (bookedCount < maxCapacity) ออก
+      // แล้ว push ลง array ตรงๆ เลย
+      availableSchedules.push({
+        id: schedule.id,
+        start_time: schedule.start_time,
+        end_time: schedule.end_time,
+        gym_enum: schedule.gym_enum,
+        gyms_id: schedule.gyms_id,
+        capacity_data: {
+          id: schedule.capacity_data?.id,
+          capacity: maxCapacity,
+        },
+        booking_count: bookedCount,
+        available_seats: maxCapacity - bookedCount,
+        // เพิ่ม flag นี้ไปให้หน้าบ้านเช็คง่ายๆ
+        is_full: bookedCount >= maxCapacity,
+      });
     }
 
     return availableSchedules;
