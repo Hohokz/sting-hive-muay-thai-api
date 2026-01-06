@@ -167,8 +167,8 @@ exports.deleteUser = async (id, deletedBy) => {
       throw new Error("User not found");
     }
 
-    // Soft delete
-    await user.remove();
+    // Hard delete (permanent deletion)
+    await user.destroy();
 
     return { message: "User deleted successfully" };
   } catch (error) {
