@@ -168,11 +168,7 @@ exports.deleteUser = async (id, deletedBy) => {
     }
 
     // Soft delete
-    await user.update({
-      is_active: false,
-      updated_by: deletedBy,
-      updated_date: new Date(),
-    });
+    await user.remove();
 
     return { message: "User deleted successfully" };
   } catch (error) {
