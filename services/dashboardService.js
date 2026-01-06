@@ -76,13 +76,11 @@ const getDailyBookingsByDate = async (date) => {
     // แปลง YYYY-MM-DD → ช่วงเวลาของวันนั้น
     const dayjs = require("dayjs");
     const utc = require("dayjs/plugin/utc");
-    const timezone = require("dayjs/plugin/timezone");
 
     dayjs.extend(utc);
-    dayjs.extend(timezone);
 
-    const startOfDay = dayjs.tz(date, "Asia/Bangkok").startOf("day").toDate();
-    const endOfDay = dayjs.tz(date, "Asia/Bangkok").endOf("day").toDate();
+    const startOfDay = dayjs(date).startOf("day").toDate();
+    const endOfDay = dayjs(date).endOf("day").toDate();
 
     const bookings = await ClassesBooking.findAll({
       where: {

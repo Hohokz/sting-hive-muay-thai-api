@@ -16,12 +16,8 @@ const { BOOKING_STATUS } = require("../models/Enums");
 
 const dayjs = require("dayjs");
 const utc = require("dayjs/plugin/utc");
-const timezone = require("dayjs/plugin/timezone");
 
 dayjs.extend(utc);
-dayjs.extend(timezone);
-
-const BKK_TZ = "Asia/Bangkok";
 
 // =================================================================
 // HELPER FUNCTIONS
@@ -54,9 +50,9 @@ const _checkAvailability = async (
     throw error;
   }
 
-  const targetDate = dayjs.tz(bookingData, BKK_TZ).startOf("day").toDate();
-  const startOfDay = dayjs.tz(targetDate, BKK_TZ).startOf("day").toDate();
-  const endOfDay = dayjs.tz(targetDate, BKK_TZ).endOf("day").toDate();
+  const targetDate = dayjs(bookingData).startOf("day").toDate();
+  const startOfDay = dayjs(targetDate).startOf("day").toDate();
+  const endOfDay = dayjs(targetDate).endOf("day").toDate();
 
   // ✅ 1.5 เช็คก่อนว่ายิมปิดทั้งยิมหรือไม่
   const gymId = gyms_id || schedule.gyms_id;
@@ -283,8 +279,9 @@ const createBooking = async (bookingData) => {
   } = bookingData;
 
   // ✅ [PAST DATE VALIDATION] Move to the top for efficiency
-  const today = dayjs.tz(dayjs(), BKK_TZ).startOf("day");
-  const bookingDateObj = dayjs.tz(date_booking, BKK_TZ).startOf("day");
+  // ✅ [PAST DATE VALIDATION] Move to the top for efficiency
+  const today = dayjs().startOf("day");
+  const bookingDateObj = dayjs(date_booking).startOf("day").hour(7);
 
   if (bookingDateObj.isBefore(today)) {
     const error = new Error("Cannot book for a past date.");
@@ -397,8 +394,8 @@ const updateBooking = async (bookingId, updateData) => {
   console.log("UPDATE DATA", updateData);
 
   // ✅ [PAST DATE VALIDATION] Move to the top
-  const today = dayjs.tz(dayjs(), BKK_TZ).startOf("day");
-  const bookingDateObj = dayjs.tz(date_booking, BKK_TZ).startOf("day");
+  const today = dayjs().startOf("day");
+  const bookingDateObj = dayjs(date_booking).startOf("day").hour(7);
 
   if (bookingDateObj.isBefore(today)) {
     const error = new Error("Cannot book for a past date.");
