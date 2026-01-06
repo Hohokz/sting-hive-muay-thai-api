@@ -288,6 +288,18 @@ const createBooking = async (bookingData) => {
       false
     );
 
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); // ล้างค่าเวลาให้เป็น 00:00:00 เพื่อเช็คแค่วันที่
+
+    const bookingDateObj = new Date(date_booking);
+    bookingDateObj.setHours(0, 0, 0, 0);
+
+    if (bookingDateObj < today) {
+      const error = new Error("Cannot book for a past date.");
+      error.status = 400; // Bad Request
+      throw error;
+    }
+
     // 2. กันจองซ้ำ
     if (client_email) {
       const existingBooking = await ClassesBooking.findOne({
@@ -405,6 +417,18 @@ const updateBooking = async (bookingId, updateData) => {
         null,
         true
       );
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); // ล้างค่าเวลาให้เป็น 00:00:00 เพื่อเช็คแค่วันที่
+
+    const bookingDateObj = new Date(date_booking);
+    bookingDateObj.setHours(0, 0, 0, 0);
+
+    if (bookingDateObj < today) {
+      const error = new Error("Cannot book for a past date.");
+      error.status = 400; // Bad Request
+      throw error;
     }
 
     const schedule = await getSchedulesById(classes_schedule_id);
