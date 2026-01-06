@@ -14,6 +14,15 @@ const { getSchedulesById } = require("../services/classesScheduleService");
 
 const { BOOKING_STATUS } = require("../models/Enums");
 
+const dayjs = require("dayjs");
+const utc = require("dayjs/plugin/utc");
+const timezone = require("dayjs/plugin/timezone");
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
+
+const BKK_TZ = "Asia/Bangkok";
+
 // =================================================================
 // HELPER FUNCTIONS
 // =================================================================
@@ -45,9 +54,9 @@ const _checkAvailability = async (
     throw error;
   }
 
-  const targetDate = new Date(bookingData);
-  const startOfDay = new Date(targetDate).setHours(0, 0, 0, 0);
-  const endOfDay = new Date(targetDate).setHours(23, 59, 59, 999);
+  const targetDate = dayjs.tz(bookingData, BKK_TZ).startOf("day").toDate();
+  const startOfDay = dayjs.tz(targetDate, BKK_TZ).startOf("day").toDate();
+  const endOfDay = dayjs.tz(targetDate, BKK_TZ).endOf("day").toDate();
 
   // ✅ 1.5 เช็คก่อนว่ายิมปิดทั้งยิมหรือไม่
   const gymId = gyms_id || schedule.gyms_id;
@@ -273,6 +282,18 @@ const createBooking = async (bookingData) => {
     trainer,
   } = bookingData;
 
+  // ✅ [PAST DATE VALIDATION] Move to the top for efficiency
+  const today = dayjs.tz(dayjs(), BKK_TZ).startOf("day");
+  const bookingDateObj = dayjs.tz(date_booking, BKK_TZ).startOf("day");
+
+  if (bookingDateObj.isBefore(today)) {
+    const error = new Error("Cannot book for a past date.");
+    error.status = 400;
+    throw error;
+  }
+
+  const normalizedBookingDate = bookingDateObj.toDate();
+
   const transaction = await sequelize.transaction();
   let newBooking = null; // ✅ ต้องอยู่นอก try
 
@@ -288,18 +309,6 @@ const createBooking = async (bookingData) => {
       false
     );
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0); // ล้างค่าเวลาให้เป็น 00:00:00 เพื่อเช็คแค่วันที่
-
-    const bookingDateObj = new Date(date_booking);
-    bookingDateObj.setHours(0, 0, 0, 0);
-
-    if (bookingDateObj < today) {
-      const error = new Error("Cannot book for a past date.");
-      error.status = 400; // Bad Request
-      throw error;
-    }
-
     // 2. กันจองซ้ำ
     if (client_email) {
       const existingBooking = await ClassesBooking.findOne({
@@ -307,7 +316,7 @@ const createBooking = async (bookingData) => {
           classes_schedule_id,
           client_email,
           booking_status: { [Op.notIn]: ["CANCELED", "FAILED"] },
-          date_booking,
+          date_booking: normalizedBookingDate,
         },
         transaction,
       });
@@ -336,7 +345,7 @@ const createBooking = async (bookingData) => {
         booking_status: "SUCCEED",
         capacity,
         is_private: is_private || false,
-        date_booking,
+        date_booking: normalizedBookingDate,
         created_by: client_name || "CLIENT_APP",
         gyms_id: schedule.gyms_id,
         gyms_enum: schedule.gym_enum,
@@ -387,6 +396,18 @@ const updateBooking = async (bookingId, updateData) => {
 
   console.log("UPDATE DATA", updateData);
 
+  // ✅ [PAST DATE VALIDATION] Move to the top
+  const today = dayjs.tz(dayjs(), BKK_TZ).startOf("day");
+  const bookingDateObj = dayjs.tz(date_booking, BKK_TZ).startOf("day");
+
+  if (bookingDateObj.isBefore(today)) {
+    const error = new Error("Cannot book for a past date.");
+    error.status = 400;
+    throw error;
+  }
+
+  const normalizedBookingDate = bookingDateObj.toDate();
+
   console.log("[Booking Service] Updating booking:", bookingId, updateData);
 
   const transaction = await sequelize.transaction();
@@ -419,18 +440,6 @@ const updateBooking = async (bookingId, updateData) => {
       );
     }
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0); // ล้างค่าเวลาให้เป็น 00:00:00 เพื่อเช็คแค่วันที่
-
-    const bookingDateObj = new Date(date_booking);
-    bookingDateObj.setHours(0, 0, 0, 0);
-
-    if (bookingDateObj < today) {
-      const error = new Error("Cannot book for a past date.");
-      error.status = 400; // Bad Request
-      throw error;
-    }
-
     const schedule = await getSchedulesById(classes_schedule_id);
     if (!schedule) {
       const error = new Error("Schedule not found.");
@@ -446,7 +455,7 @@ const updateBooking = async (bookingId, updateData) => {
         client_phone,
         capacity,
         is_private,
-        date_booking,
+        date_booking: normalizedBookingDate,
         gyms_id: schedule.gyms_id,
         gyms_enum: schedule.gym_enum,
         trainer,
