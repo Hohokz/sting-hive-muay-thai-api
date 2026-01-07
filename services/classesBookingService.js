@@ -278,7 +278,13 @@ const createBooking = async (bookingData) => {
     trainer,
   } = bookingData;
 
-  // ✅ [PAST DATE VALIDATION] Move to the top for efficiency
+  // Validation: Trainer can only be assigned to private classes
+  if (trainer && !is_private) {
+    const error = new Error("Trainer can only be assigned to private classes.");
+    error.status = 400;
+    throw error;
+  }
+
   // ✅ [PAST DATE VALIDATION] Move to the top for efficiency
   const today = dayjs().startOf("day");
   const bookingDateObj = dayjs(date_booking).startOf("day").hour(7);
@@ -390,6 +396,13 @@ const updateBooking = async (bookingId, updateData) => {
     date_booking,
     trainer,
   } = updateData;
+
+  // Validation: Trainer can only be assigned to private classes
+  if (trainer && !is_private) {
+    const error = new Error("Trainer can only be assigned to private classes.");
+    error.status = 400;
+    throw error;
+  }
 
   console.log("UPDATE DATA", updateData);
 

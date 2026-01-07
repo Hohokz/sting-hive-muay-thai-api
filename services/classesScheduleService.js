@@ -8,6 +8,10 @@ const {
   ClassesBookingInAdvance,
 } = require("../models/Associations");
 const { Op, Sequelize } = require("sequelize");
+const dayjs = require("dayjs");
+const utc = require("dayjs/plugin/utc");
+
+dayjs.extend(utc);
 
 // =================================================================
 // 1. HELPER / VALIDATION FUNCTIONS
@@ -275,13 +279,11 @@ const getAvailableSchedulesByBookingDate = async (
   isPrivateClass
 ) => {
   try {
-    const targetDate = new Date(date);
+    const targetDate = dayjs(date);
 
     // ✅ คำนวณ Start/End of Day ไว้ก่อนเลย เพื่อใช้ในการ Query Advance Config
-    const startOfDay = new Date(targetDate);
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(targetDate);
-    endOfDay.setHours(23, 59, 59, 999);
+    const startOfDay = targetDate.startOf("day").toDate();
+    const endOfDay = targetDate.endOf("day").toDate();
 
     console.log("--------------- DEBUG AVAILABLE SCHEDULES ---------------");
     console.log("Input Date:", date);
@@ -398,7 +400,7 @@ const getAvailableSchedulesByBookingDate = async (
           capacity: maxCapacity,
         },
         booking_count: bookedCount,
-        available_seats: maxCapacity - bookedCount,
+        available_seats: Math.max(0, maxCapacity - bookedCount),
         // เพิ่ม flag นี้ไปให้หน้าบ้านเช็คง่ายๆ
         is_full: bookedCount >= maxCapacity,
       });
@@ -606,7 +608,9 @@ const _checkAvailability = async (
   });
 
   const usedCapacity = currentBookingCount || 0;
-  const maxCapacity = capacityData.capacity;
+  // ✅ ใช้ capacity ที่ส่งมา (ถ้ามี) เป็น maxCapacity ถ้าไม่มีให้ใช้จาก DB
+  const maxCapacity = capacity !== undefined ? capacity : capacityData.capacity;
+
   if (usedCapacity > maxCapacity) {
     return `ขณะนี้มีการจองเกินความจุใหม่: ${usedCapacity}/${maxCapacity} (จองแล้ว ${usedCapacity} แต่ปรับลดเหลือ ${maxCapacity}) โปรแจ้งลูกค้าเพื่อทำการย้ายคลาสหรือยกเลิก`;
   }
