@@ -313,23 +313,23 @@ const createBooking = async (bookingData) => {
     );
 
     // 2. กันจองซ้ำ
-    if (client_email) {
-      const existingBooking = await ClassesBooking.findOne({
-        where: {
-          classes_schedule_id,
-          client_email,
-          booking_status: { [Op.notIn]: ["CANCELED", "FAILED"] },
-          date_booking: normalizedBookingDate,
-        },
-        transaction,
-      });
+    // if (client_email) {
+    //   const existingBooking = await ClassesBooking.findOne({
+    //     where: {
+    //       classes_schedule_id,
+    //       client_email,
+    //       booking_status: { [Op.notIn]: ["CANCELED", "FAILED"] },
+    //       date_booking: normalizedBookingDate,
+    //     },
+    //     transaction,
+    //   });
 
-      if (existingBooking && client_email !== "Stingcluboffice@gmail.com") {
-        const error = new Error("You have already booked this class.");
-        error.status = 409;
-        throw error;
-      }
-    }
+    //   if (existingBooking && client_email !== "Stingcluboffice@gmail.com") {
+    //     const error = new Error("You have already booked this class.");
+    //     error.status = 409;
+    //     throw error;
+    //   }
+    // }
 
     const schedule = await getSchedulesById(classes_schedule_id);
     if (!schedule) {
