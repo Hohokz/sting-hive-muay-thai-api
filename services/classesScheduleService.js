@@ -11,7 +11,10 @@ const { Op, Sequelize } = require("sequelize");
 const dayjs = require("dayjs");
 const utc = require("dayjs/plugin/utc");
 
+const activityLogService = require("./activityLogService");
+
 dayjs.extend(utc);
+
 
 // =================================================================
 // 1. HELPER / VALIDATION FUNCTIONS
@@ -66,7 +69,7 @@ const _validateScheduleInput = (newStartTime, newEndTime, capacity) => {
 /**
  * [CREATE] สร้างรายการ Schedule ใหม่ พร้อม Capacity
  */
-const createSchedule = async (scheduleData) => {
+const createSchedule = async (scheduleData, performedByUser = null) => {
   const {
     start_time,
     end_time,
@@ -76,6 +79,7 @@ const createSchedule = async (scheduleData) => {
     capacity,
     is_private_class,
   } = scheduleData;
+
   console.log("--- Service: createSchedule Start ---");
   console.log("Input data:", JSON.stringify(scheduleData, null, 2));
 
@@ -104,8 +108,10 @@ const createSchedule = async (scheduleData) => {
         gym_enum,
         description,
         is_private_class: is_private_class || false,
-        created_by: user || "API_CALL",
+        created_by: performedByUser?.name || performedByUser?.username || user || "API_CALL",
         gyms_id: gyms_id,
+
+
       },
       { transaction }
     );
@@ -115,12 +121,32 @@ const createSchedule = async (scheduleData) => {
       {
         classes_id: newSchedule.id,
         capacity: capacity,
-        created_by: user || "API_CALL",
+        created_by: performedByUser?.name || performedByUser?.username || user || "API_CALL",
+
+
       },
       { transaction }
     );
 
+    // ✅ Log Activity
+    await activityLogService.createLog({
+      user_id: performedByUser?.id || null,
+      user_name: performedByUser?.name || performedByUser?.username || user || "API_CALL",
+      service: "SCHEDULE",
+      action: "CREATE",
+      details: {
+        schedule_id: newSchedule.id,
+        start_time,
+        end_time,
+        gym_enum,
+        capacity,
+      },
+    });
+
+
+
     await transaction.commit();
+
 
     // ดึงข้อมูลพร้อม Capacity กลับไป
     return await ClassesSchedule.findByPk(newSchedule.id, {
@@ -136,7 +162,8 @@ const createSchedule = async (scheduleData) => {
 /**
  * [UPDATE] อัปเดตรายการ Schedule ที่มีอยู่ พร้อม Capacity
  */
-const updateSchedule = async (id, updateData) => {
+const updateSchedule = async (id, updateData, performedByUser = null) => {
+
   const schedule = await ClassesSchedule.findByPk(id, {
     include: [{ model: ClassesCapacity, as: "capacity_data" }],
   });
@@ -184,13 +211,23 @@ const updateSchedule = async (id, updateData) => {
   const transaction = await ClassesSchedule.sequelize.transaction();
 
   try {
+    // 3. Preserve old values for logging
+    const oldValues = {
+      start_time: schedule.start_time,
+      end_time: schedule.end_time,
+      capacity: currentCapacity,
+    };
+
     // 1. อัปเดต Schedule Master
     await schedule.update(
       {
         ...updateData,
         start_time: newStartTimeStr,
         end_time: newEndTimeStr,
-        updated_by: updateData.user || "API_CALL",
+        updated_by: performedByUser?.name || performedByUser?.username || updateData.user || "API_CALL",
+        updated_date: new Date(),
+
+
         gyms_id: gyms_id,
       },
       { transaction }
@@ -201,7 +238,9 @@ const updateSchedule = async (id, updateData) => {
       await ClassesCapacity.update(
         {
           capacity: updateData.capacity,
-          updated_by: updateData.user || "API_CALL",
+          updated_by: performedByUser?.name || performedByUser?.username || updateData.user || "API_CALL",
+
+
         },
         {
           where: { classes_id: id },
@@ -210,7 +249,27 @@ const updateSchedule = async (id, updateData) => {
       );
     }
 
+    // ✅ Log Activity
+    await activityLogService.createLog({
+      user_id: performedByUser?.id || null,
+      user_name: performedByUser?.name || performedByUser?.username || updateData.user || "API_CALL",
+      service: "SCHEDULE",
+      action: "UPDATE",
+      details: {
+        schedule_id: id,
+        old_values: oldValues,
+        new_values: {
+          start_time: newStartTimeStr,
+          end_time: newEndTimeStr,
+          capacity: newCapacity,
+        },
+      },
+    });
+
+
+
     await transaction.commit();
+
 
     // ดึงข้อมูลล่าสุดกลับไป
     return await ClassesSchedule.findByPk(id, {
@@ -419,11 +478,29 @@ const getAvailableSchedulesByBookingDate = async (
 /**
  * [DELETE] ลบรายการ Schedule ที่มีอยู่
  */
-const deleteSchedule = async (id) => {
+const deleteSchedule = async (id, performedByUser = null) => {
   // *TODO: ก่อนลบ ควรตรวจสอบว่ามี ClassesBooking ผูกอยู่กับ Schedule นี้หรือไม่
 
   try {
+    // ✅ Log Activity (Before Delete)
+    const scheduleToDelete = await ClassesSchedule.findByPk(id);
+    if (scheduleToDelete) {
+      await activityLogService.createLog({
+        user_id: performedByUser?.id,
+        user_name: performedByUser?.username || "ADMIN",
+        service: "SCHEDULE",
+        action: "DELETE",
+        details: {
+          schedule_id: id,
+          start_time: scheduleToDelete.start_time,
+          end_time: scheduleToDelete.end_time,
+        },
+      });
+    }
+
+
     const deletedCount = await ClassesSchedule.destroy({
+
       where: { id },
     });
 
@@ -451,7 +528,8 @@ const deleteSchedule = async (id) => {
   }
 };
 
-const createAdvancedSchedule = async (scheduleData) => {
+const createAdvancedSchedule = async (scheduleData, performedByUser = null) => {
+
   console.log("[Service] createAdvancedSchedule hit.");
 
   if (!ClassesBookingInAdvance.sequelize) {
@@ -524,11 +602,33 @@ const createAdvancedSchedule = async (scheduleData) => {
         capacity: scheduleData.capacity,
         is_close_gym: scheduleData.is_close_gym || false,
         gyms_id: gymsId,
+        created_by: performedByUser?.name || performedByUser?.username || "ADMIN",
       },
       { transaction: t }
     );
 
+
+
+    // ✅ Log Activity
+    await activityLogService.createLog({
+      user_id: performedByUser?.id || null,
+      user_name: performedByUser?.name || performedByUser?.username || "ADMIN",
+      service: "SCHEDULE",
+      action: "CREATE_ADVANCED",
+      details: {
+        advanced_id: newRecord.id,
+        schedule_id: scheduleData.schedule_id,
+        start_date: scheduleData.start_date,
+        end_date: scheduleData.end_date,
+        capacity: scheduleData.capacity,
+        is_close_gym: scheduleData.is_close_gym,
+      },
+    });
+
+
+
     await t.commit();
+
 
     console.log("------------------------------------------");
     console.log("[Success] Data created:", newRecord.toJSON());
@@ -685,7 +785,8 @@ const getAdvancedSchedules = async (filters = {}) => {
   };
 };
 
-const updateAdvancedSchedule = async (id, updateData) => {
+const updateAdvancedSchedule = async (id, updateData, performedByUser = null) => {
+
   console.log(`[Service] updateAdvancedSchedule hit for ID: ${id}`);
 
   const config = await ClassesBookingInAdvance.findByPk(id);
@@ -758,6 +859,16 @@ const updateAdvancedSchedule = async (id, updateData) => {
       }
     }
 
+    // 3. Preserve old values for logging
+    const oldValues = {
+      start_date: config.start_date,
+      end_date: config.end_date,
+      capacity: config.capacity,
+      is_close_gym: config.is_close_gym,
+      classes_schedule_id: config.classes_schedule_id,
+      gyms_id: config.gyms_id,
+    };
+
     await config.update(
       {
         start_date: nextData.start_date,
@@ -766,11 +877,31 @@ const updateAdvancedSchedule = async (id, updateData) => {
         is_close_gym: nextData.is_close_gym,
         classes_schedule_id: nextData.classes_schedule_id,
         gyms_id: nextData.gyms_id,
+        updated_by: performedByUser?.name || performedByUser?.username || "ADMIN",
+        updated_date: new Date(),
       },
       { transaction: t }
     );
 
+
+
+    // ✅ Log Activity
+    await activityLogService.createLog({
+      user_id: performedByUser?.id || null,
+      user_name: performedByUser?.name || performedByUser?.username || "ADMIN",
+      service: "SCHEDULE",
+      action: "UPDATE_ADVANCED",
+      details: {
+        advanced_id: id,
+        old_values: oldValues,
+        new_values: nextData,
+      },
+    });
+
+
+
     await t.commit();
+
     return config;
   } catch (error) {
     if (t) await t.rollback();
@@ -778,9 +909,27 @@ const updateAdvancedSchedule = async (id, updateData) => {
   }
 };
 
-const deleteAdvancedSchedule = async (id) => {
+const deleteAdvancedSchedule = async (id, performedByUser = null) => {
   console.log(`[Service] deleteAdvancedSchedule hit for ID: ${id}`);
+  
+  // ✅ Log Activity (Before Delete)
+  const configToDelete = await ClassesBookingInAdvance.findByPk(id);
+  if (configToDelete) {
+    await activityLogService.createLog({
+      user_id: performedByUser?.id || null,
+      user_name: performedByUser?.name || performedByUser?.username || "ADMIN",
+      service: "SCHEDULE",
+      action: "DELETE_ADVANCED",
+      details: {
+        advanced_id: id,
+      },
+    });
+
+  }
+
+
   const deletedCount = await ClassesBookingInAdvance.destroy({
+
     where: { id },
   });
 

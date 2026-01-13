@@ -10,8 +10,12 @@ const handleServiceError = (res, error) => {
 // [POST] Create Booking
 const createBooking = async (req, res) => {
   // Validation
+  console.log("---------------- [POST] Create Booking DEBUG ----------------");
+  console.log("Request Body:", JSON.stringify(req.body, null, 2));
+
   const { classes_schedule_id, client_name, client_email } = req.body;
   if (!classes_schedule_id || !client_name || !client_email) {
+    console.error("❌ Missing required fields:", { classes_schedule_id, client_name, client_email });
     return res
       .status(400)
       .json({
@@ -21,16 +25,22 @@ const createBooking = async (req, res) => {
   }
 
   try {
-    const booking = await bookingService.createBooking(req.body);
+    const booking = await bookingService.createBooking(req.body, req.user);
+
     res.status(201).json({
       success: true,
       message: "Booking created successfully.",
       data: booking,
     });
   } catch (error) {
+    console.error("❌ Error in createBooking Controller:", error.message);
+    if (error.status === 400) {
+        console.error("Validation Error Details:", error);
+    }
     handleServiceError(res, error);
   }
 };
+
 
 const updateBooking = async (req, res) => {
   try {
@@ -44,7 +54,8 @@ const updateBooking = async (req, res) => {
       });
     }
 
-    const updatedBooking = await bookingService.updateBooking(id, updateData);
+    const updatedBooking = await bookingService.updateBooking(id, updateData, req.user);
+
 
     return res.status(200).json({
       success: true,
@@ -80,8 +91,9 @@ const cancelBooking = async (req, res) => {
     const result = await bookingService.updateBookingStatus(
       id,
       "CANCELED",
-      "API_USER"
+      req.user
     );
+
     res
       .status(200)
       .json({ success: true, message: "Booking canceled.", data: result });
@@ -95,7 +107,8 @@ const patchBookingNote = async (req, res) => {
   const { note } = req.body;
 
   try {
-    const result = await bookingService.updateBookingNote(id, note);
+    const result = await bookingService.updateBookingNote(id, note, req.user);
+
     return res.status(200).json(result);
   } catch (error) {
     handleServiceError(res, error);
@@ -107,7 +120,8 @@ const updateBookingTrainer = async (req, res) => {
   const trainerName = req.body.trainer_name;
 
   try {
-    const result = await bookingService.updateBookingTrainer(id, trainerName);
+    const result = await bookingService.updateBookingTrainer(id, trainerName, req.user);
+
 
     return res.status(200).json({
       success: true,
@@ -125,8 +139,10 @@ const updateBookingPayment = async (req, res) => {
   try {
     const result = await bookingService.updateBookingPayment(
       id,
-      payment_status
+      payment_status,
+      req.user
     );
+
 
     return res.status(200).json({
       success: true,

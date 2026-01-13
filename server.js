@@ -22,6 +22,7 @@ let isDbConnected = false;
 
 const allowedOrigins = [
   "http://localhost:5173",
+  "http://localhost:5175",
   "https://sting-hive-muay-thai-web.vercel.app",
   "https://expert-space-giggle-jvqg649wp66cqrjq-5173.app.github.dev",
   "https://bookish-fishstick-qjpxr96g54wf9p9p-5173.app.github.dev", // ✅ เพิ่มตัวล่าสุดเข้าไป
@@ -88,6 +89,9 @@ app.use("/api/v1/bookings", require("./routes/classesBookingRoutes"));
 app.use("/api/v1/dashboard", require("./routes/dashBoardRoutes"));
 app.use("/api/v1/auth", require("./routes/authRoutes")); // ✅ Auth Routes
 app.use("/api/v1/users", require("./routes/userRoutes")); // ✅ User CRUD Routes (Admin Only)
+app.use("/api/v1/activity-logs", require("./routes/activityLogRoutes")); // ✅ Activity Log Routes
+app.use("/api/v1/trainer-gyms", require("./routes/trainerGymRoutes")); // ✅ Trainer Gym Routes
+
 
 app.get("/", (req, res) => {
   const dbStatus = isDbConnected ? "Connected" : "Error";

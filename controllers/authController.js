@@ -1,5 +1,7 @@
 const authService = require('../services/authService');
 const User = require('../models/User');
+const activityLogService = require('../services/activityLogService');
+
 
 exports.login = async (req, res) => {
     try {
@@ -19,7 +21,21 @@ exports.login = async (req, res) => {
 
         const tokens = authService.generateTokens(user);
 
+        // ✅ Log Activity
+        await activityLogService.createLog({
+            user_id: user.id,
+            user_name: user.name || user.username,
+            service: 'USER',
+
+            action: 'LOGIN',
+            ip_address: req.ip,
+            details: {
+                role: user.role
+            }
+        });
+
         // Optional: Save refresh token to DB or send as HttpOnly cookie
+
         // For now, sending both in response body as requested
 
         res.json({
@@ -27,8 +43,10 @@ exports.login = async (req, res) => {
             user: {
                 id: user.id,
                 username: user.username,
+                name: user.name,
                 role: user.role
             },
+
             ...tokens
         });
 

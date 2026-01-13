@@ -11,6 +11,9 @@ const ClassesCapacity = require('./ClassesCapacity')(sequelize);
 const ClassesBooking = require('./ClassesBooking');
 const ClassesBookingInAdvance = require('./ClassesBookingInAdvance');
 const Payment = require('./Payment');
+const ActivityLog = require('./ActivityLog');
+const TrainerGyms = require('./TrainerGyms');
+
 
 
 // -----------------------------------------------------------
@@ -88,6 +91,35 @@ Payment.belongsTo(ClassesBooking, {
 // User.hasMany(ClassesBooking, { foreignKey: 'user_id', as: 'user_bookings' });
 // ClassesBooking.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
 
+// E. User <-> ActivityLog (One-to-Many)
+User.hasMany(ActivityLog, {
+    foreignKey: 'user_id',
+    as: 'activity_logs'
+});
+ActivityLog.belongsTo(User, {
+    foreignKey: 'user_id',
+    as: 'user'
+});
+
+// F. User <-> Gyms (Many-to-Many via TrainerGyms)
+User.belongsToMany(Gyms, {
+    through: TrainerGyms,
+    foreignKey: 'user_id',
+    otherKey: 'gyms_id',
+    as: 'gyms'
+});
+
+Gyms.belongsToMany(User, {
+    through: TrainerGyms,
+    foreignKey: 'gyms_id',
+    otherKey: 'user_id',
+    as: 'trainers'
+});
+
+TrainerGyms.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
+TrainerGyms.belongsTo(Gyms, { foreignKey: 'gyms_id', as: 'gym' });
+
+
 
 // -----------------------------------------------------------
 // 3. EXPORT โมเดลทั้งหมด
@@ -101,4 +133,6 @@ module.exports = {
     ClassesBooking,
     ClassesBookingInAdvance,
     Payment,
+    ActivityLog,
+    TrainerGyms,
 };

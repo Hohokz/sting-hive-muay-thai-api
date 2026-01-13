@@ -43,6 +43,7 @@ const ClassesBooking = sequelize.define('CLASSES_BOOKING', {
         type: DataTypes.INTEGER,
         allowNull: true,
     },
+    multipleStudents: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
 }, { tableName: 'classes_booking', timestamps: false });
 
 module.exports = ClassesBooking;

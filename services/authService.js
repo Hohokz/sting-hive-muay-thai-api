@@ -15,8 +15,10 @@ exports.generateTokens = (user) => {
   const payload = {
     id: user.id,
     username: user.username,
+    name: user.name,
     role: user.role,
   };
+
 
   const accessToken = jwt.sign(payload, process.env.JWT_SECRET, {
     expiresIn: process.env.JWT_EXPIRES_IN || "15m",

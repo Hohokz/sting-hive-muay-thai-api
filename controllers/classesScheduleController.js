@@ -48,7 +48,8 @@ const createSchedule = async (req, res) => {
   try {
     // 2. เรียกใช้ Service Layer
     console.log("[Controller] Calling service.createSchedule...");
-    const newSchedule = await scheduleService.createSchedule(req.body);
+    const newSchedule = await scheduleService.createSchedule(req.body, req.user);
+
 
     // 3. ส่ง Response สำเร็จ
     return res.status(201).json({
@@ -76,7 +77,8 @@ const updateSchedule = async (req, res) => {
   }
 
   try {
-    const updatedSchedule = await scheduleService.updateSchedule(id, req.body);
+    const updatedSchedule = await scheduleService.updateSchedule(id, req.body, req.user);
+
 
     return res.status(200).json({
       success: true,
@@ -149,7 +151,8 @@ const deleteSchedule = async (req, res) => {
   const { id } = req.params;
 
   try {
-    const result = await scheduleService.deleteSchedule(id);
+    const result = await scheduleService.deleteSchedule(id, req.user);
+
 
     return res.status(200).json({
       success: true,
@@ -191,7 +194,8 @@ const createScheduleInAdvance = async (req, res) => {
 
   try {
     // 2. เรียกใช้ Service Layer
-    const result = await scheduleService.createAdvancedSchedule(req.body);
+    const result = await scheduleService.createAdvancedSchedule(req.body, req.user);
+
 
     // 3. ส่ง Response
     if (result.warningMessage) {
@@ -250,8 +254,11 @@ const updateAdvancedSchedule = async (req, res) => {
   try {
     const updatedConfig = await scheduleService.updateAdvancedSchedule(
       id,
-      req.body
+      req.body,
+      req.user
     );
+
+
 
     return res.status(200).json({
       success: true,
@@ -271,7 +278,8 @@ const deleteAdvancedSchedule = async (req, res) => {
   const { id } = req.params;
 
   try {
-    const result = await scheduleService.deleteAdvancedSchedule(id);
+    const result = await scheduleService.deleteAdvancedSchedule(id, req.user);
+
 
     return res.status(200).json({
       success: true,

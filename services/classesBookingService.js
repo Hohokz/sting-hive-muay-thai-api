@@ -11,6 +11,8 @@ const fs = require("fs");
 const path = require("path");
 const { sendBookingConfirmationEmail } = require("../utils/emailService");
 const { getSchedulesById } = require("../services/classesScheduleService");
+const activityLogService = require("../services/activityLogService");
+
 
 const { BOOKING_STATUS } = require("../models/Enums");
 
@@ -266,7 +268,7 @@ const sendEmailBookingConfirmation = async (
 /**
  * [CREATE] สร้างการจองใหม่ (Booking)
  */
-const createBooking = async (bookingData) => {
+const createBooking = async (bookingData, performedByUser = null) => {
   const {
     classes_schedule_id,
     client_name,
@@ -276,7 +278,11 @@ const createBooking = async (bookingData) => {
     is_private,
     date_booking,
     trainer,
+    multiple_students,
   } = bookingData;
+
+  console.log("Booking Data:", bookingData);
+
 
   // Validation: Trainer can only be assigned to private classes
   if (trainer && !is_private) {
@@ -302,11 +308,13 @@ const createBooking = async (bookingData) => {
 
   try {
     // 1. เช็คที่นั่ง
+    // Arg 3: Previous Qty (0 for create)
+    // Arg 4: Requested Qty (capacity)
     await _checkAvailability(
       classes_schedule_id,
       transaction,
-      capacity,
-      0,
+      0, 
+      capacity, 
       date_booking,
       null,
       false
@@ -349,14 +357,37 @@ const createBooking = async (bookingData) => {
         capacity,
         is_private: is_private || false,
         date_booking: normalizedBookingDate,
-        created_by: client_name || "CLIENT_APP",
+        created_by: performedByUser?.name || performedByUser?.username || client_name || "CLIENT_APP",
         gyms_id: schedule.gyms_id,
         gyms_enum: schedule.gym_enum,
         trainer: trainer || "",
+        trainer: trainer || "",
+        multipleStudents: multiple_students || false, // ✅ Use snake_case if camelCase is missing
       },
       { transaction }
     );
+
+    // ✅ Log Activity
+    const performerName = performedByUser?.name || performedByUser?.username || (client_name ? `${client_name} (GUEST)` : "CLIENT_APP");
+
+
+    await activityLogService.createLog({
+      user_id: performedByUser?.id || null,
+      user_name: performerName,
+      service: "BOOKING",
+      action: "CREATE",
+      details: {
+        booking_id: newBooking.id,
+        client_name,
+        date_booking: normalizedBookingDate,
+        capacity,
+      },
+    });
+
     await transaction.commit();
+
+
+
 
     return newBooking;
   } catch (error) {
@@ -385,7 +416,7 @@ const createBooking = async (bookingData) => {
   }
 };
 
-const updateBooking = async (bookingId, updateData) => {
+const updateBooking = async (bookingId, updateData, performedByUser = null) => {
   const {
     classes_schedule_id,
     client_name,
@@ -395,7 +426,11 @@ const updateBooking = async (bookingId, updateData) => {
     is_private,
     date_booking,
     trainer,
+    multiple_students,
   } = updateData;
+
+  console.log("UPDATE DATA", updateData);
+
 
   // Validation: Trainer can only be assigned to private classes
   if (trainer && !is_private) {
@@ -456,6 +491,13 @@ const updateBooking = async (bookingId, updateData) => {
       error.status = 404;
       throw error;
     }
+    // 3. Preserve old values for logging
+    const oldValues = {
+      classes_schedule_id: booking.classes_schedule_id,
+      capacity: booking.capacity,
+      date_booking: booking.date_booking,
+    };
+
     // 4. Update
     updatedBooking = await booking.update(
       {
@@ -469,12 +511,39 @@ const updateBooking = async (bookingId, updateData) => {
         gyms_id: schedule.gyms_id,
         gyms_enum: schedule.gym_enum,
         trainer,
-        updated_by: client_name || "CLIENT_APP",
+        trainer,
+        multipleStudents: multiple_students || false,
+        updated_by: performedByUser?.name || performedByUser?.username || client_name || "CLIENT_APP",
+
+        updated_date: new Date(),
+
       },
       { transaction }
     );
 
+    // ✅ Log Activity
+    const performerName = performedByUser?.username || (typeof performedByUser === 'string' ? performedByUser : null) || `${booking.client_name} (GUEST)`;
+
+    await activityLogService.createLog({
+      user_id: performedByUser?.id || null,
+      user_name: performerName,
+      service: "BOOKING",
+      action: "UPDATE",
+      details: {
+
+        booking_id: booking.id,
+        old_values: oldValues,
+        new_values: {
+          classes_schedule_id,
+          capacity,
+          date_booking: normalizedBookingDate,
+        },
+      },
+    });
+
     await transaction.commit();
+
+
     return updatedBooking;
   } catch (error) {
     await transaction.rollback();
@@ -501,7 +570,7 @@ const updateBooking = async (bookingId, updateData) => {
   }
 };
 
-const updateBookingNote = async (bookingId, note) => {
+const updateBookingNote = async (bookingId, note, performedByUser = null) => {
   try {
     const booking = await ClassesBooking.findByPk(bookingId);
 
@@ -512,7 +581,29 @@ const updateBookingNote = async (bookingId, note) => {
     }
     await booking.update({
       admin_note: note,
+      updated_by: performedByUser?.username || "ADMIN",
+      updated_date: new Date(),
     });
+
+
+    // ✅ Log Activity
+    const performerName = performedByUser?.name || performedByUser?.username || 
+                         "SYSTEM (GUEST)";
+
+
+    await activityLogService.createLog({
+      user_id: performedByUser?.id || null,
+      user_name: performerName,
+      service: "BOOKING",
+      action: "UPDATE_NOTE",
+      details: {
+        booking_id: bookingId,
+        note: note,
+      },
+    });
+
+
+
 
     return { success: true, message: "Note updated successfully" };
   } catch (error) {
@@ -583,22 +674,49 @@ const updateBookingStatus = async (bookingId, newStatus, user) => {
       await _checkAvailability(
         booking.classes_schedule_id,
         transaction,
-        null,
-        null,
-        null,
-        false
+        null, // capacity
+        null, // newBookingCapacity
+        booking.date_booking,
+        null, // gyms_id
+        false // isUpdate
       );
     }
+
+
 
     updatedBooking = await booking.update(
       {
         booking_status: newStatus,
-        updated_by: user || "ADMIN",
+        updated_by: user?.name || user?.username || (typeof user === 'string' ? user : "ADMIN"),
+
+        updated_date: new Date(),
       },
       { transaction }
     );
 
+
+    // ✅ Log Activity
+    const performerName = user?.name || user?.username || 
+                         (typeof user === 'string' ? user : null) || 
+                         `${booking.client_name} (GUEST)`;
+
+
+    await activityLogService.createLog({
+      user_id: user?.id || null,
+      user_name: performerName,
+      service: "BOOKING",
+      action: "UPDATE_STATUS",
+      details: {
+        booking_id: bookingId,
+        old_status: oldStatus,
+        new_status: newStatus,
+      },
+    });
+
     await transaction.commit();
+
+
+
     return updatedBooking;
   } catch (error) {
     await transaction.rollback();
@@ -623,7 +741,7 @@ const updateBookingStatus = async (bookingId, newStatus, user) => {
   }
 };
 
-const updateBookingTrainer = async (bookingId, trainer) => {
+const updateBookingTrainer = async (bookingId, trainer, performedByUser = null) => {
   try {
     const booking = await ClassesBooking.findByPk(bookingId);
 
@@ -633,8 +751,32 @@ const updateBookingTrainer = async (bookingId, trainer) => {
       throw error;
     }
 
-    await booking.update({ trainer: trainer });
+    const oldTrainer = booking.trainer;
+    await booking.update({
+      trainer: trainer,
+      updated_by: performedByUser?.name || performedByUser?.username || "ADMIN",
+      updated_date: new Date(),
+    });
+
+
+
+    // ✅ Log Activity
+    await activityLogService.createLog({
+      user_id: performedByUser?.id || null,
+      user_name: performedByUser?.name || performedByUser?.username || "ADMIN",
+      service: "BOOKING",
+      action: "UPDATE_TRAINER",
+      details: {
+        booking_id: bookingId,
+        old_trainer: oldTrainer,
+        new_trainer: trainer,
+      },
+    });
+
+
+
     console.log("[Booking Service] Trainer updated successfully");
+
     return { success: true, message: "Trainer updated successfully" };
   } catch (error) {
     console.error("[Booking Service] Update Trainer Error:", error);
@@ -642,7 +784,7 @@ const updateBookingTrainer = async (bookingId, trainer) => {
   }
 };
 
-const updateBookingPayment = async (bookingId, payment_status) => {
+const updateBookingPayment = async (bookingId, payment_status, performedByUser = null) => {
   try {
     const booking = await ClassesBooking.findByPk(bookingId);
     if (!booking) {
@@ -650,12 +792,41 @@ const updateBookingPayment = async (bookingId, payment_status) => {
       error.status = 404;
       throw error;
     }
+
+    const oldStatus = booking.booking_status;
+
     if (payment_status) {
-      await booking.update({ booking_status: "PAYMENTED" });
+      await booking.update({
+        booking_status: "PAYMENTED",
+        updated_by: performedByUser?.name || performedByUser?.username || "ADMIN",
+        updated_date: new Date(),
+      });
     } else {
-      await booking.update({ booking_status: "SUCCEED" });
+      await booking.update({
+        booking_status: "SUCCEED",
+        updated_by: performedByUser?.name || performedByUser?.username || "ADMIN",
+        updated_date: new Date(),
+      });
     }
+
+
+
+    // ✅ Log Activity
+    await activityLogService.createLog({
+      user_id: performedByUser?.id || null,
+      user_name: performedByUser?.name || performedByUser?.username || "ADMIN",
+      service: "BOOKING",
+      action: "UPDATE_PAYMENT",
+      details: {
+        booking_id: bookingId,
+        old_status: oldStatus,
+        new_status: payment_status ? "PAYMENTED" : "SUCCEED",
+      },
+    });
+
+
     return { success: true, message: "Payment status updated successfully" };
+
   } catch (error) {
     console.error("[Booking Service] Update Payment Error:", error);
     throw error;
