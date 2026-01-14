@@ -3,7 +3,8 @@ const trainerGymService = require("../services/trainerGymService");
 const getTrainersByGym = async (req, res) => {
   try {
     const { gymId } = req.params;
-    const trainers = await trainerGymService.getTrainersByGym(gymId);
+    const { date, classes_schedule_id } = req.query;
+    const trainers = await trainerGymService.getTrainersByGym(gymId, { date, classes_schedule_id });
     res.status(200).json({ success: true, data: trainers });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

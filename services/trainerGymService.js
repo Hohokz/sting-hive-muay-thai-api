@@ -1,12 +1,14 @@
-const { User, Gyms, TrainerGyms } = require("../models/Associations");
+const { User, Gyms, TrainerGyms, ClassesBooking, ClassesSchedule } = require("../models/Associations");
 const { Op } = require("sequelize");
+const { sequelize } = require("../config/db");
 const activityLogService = require("./activityLogService");
+const { getDailyBookings } = require("../controllers/dashboardController");
 
 /**
  * ดึงรายชื่อเทรนเนอร์ที่ผูกกับยิมที่เลือก
  * @param {number} gymId 
  */
-const getTrainersByGym = async (gymId) => {
+const getTrainersByGym = async (gymId, options = {}) => {
   try {
     const gym = await Gyms.findByPk(gymId, {
       include: [
@@ -14,7 +16,7 @@ const getTrainersByGym = async (gymId) => {
           model: User,
           as: "trainers",
           attributes: ["id", "username", "name", "email", "phone", "role"],
-          through: { attributes: [] }, // ไม่เอาข้อมูลจาก table กลาง
+          through: { attributes: [] },
         },
       ],
     });
@@ -23,7 +25,52 @@ const getTrainersByGym = async (gymId) => {
       throw new Error("Gym not found");
     }
 
-    return gym.trainers;
+    let trainers = gym.trainers;
+
+    // -------------------------------------------------------------
+    // Filter trainers if date & schedule are provided
+    // -------------------------------------------------------------
+    if (options.date && options.classes_schedule_id) {
+      const targetDate = new Date(options.date);
+
+    const startOfDay = new Date(targetDate.setHours(0, 0, 0, 0));
+    const endOfDay = new Date(targetDate.setHours(23, 59, 59, 999));
+    console.log("startOfDay", startOfDay);
+    console.log("endOfDay", endOfDay);
+      // Fetch Schedule Time
+    const bookings = await ClassesBooking.findAll({
+        where: {
+            // หากต้องการหา "ทุกการจอง" ในวันที่นั้นของ Schedule นี้
+            classes_schedule_id: options.classes_schedule_id, 
+            date_booking: { 
+                [Op.between]: [startOfDay, endOfDay]
+            }
+        },
+        // (Optional) เรียงลำดับตามเวลาจองจากน้อยไปมาก
+        order: [['date_booking', 'ASC']] 
+    });
+
+    if(bookings.length === 0){
+      return trainers;
+    }
+
+    const busyTrainers = [];
+
+      for (const b of bookings) {
+        if(b.trainer){
+          busyTrainers.push(b.trainer);
+        }
+      }
+
+      console.log("busyTrainers", busyTrainers);
+
+      trainers = trainers.filter(t => {
+        if (busyTrainers.includes(t.name)) return false; 
+        return true;
+      });
+    }
+
+    return trainers;
   } catch (error) {
     console.error("[TrainerGymService] getTrainersByGym Error:", error);
     throw error;
