@@ -230,7 +230,6 @@ const sendEmailBookingConfirmation = async (
       })
     )
     .replace("{{time_human}}", `${schedule.start_time} - ${schedule.end_time}`)
-    .replace("{{location}}", location)
     .replace("{{trainer_name}}", "Sting Coach")
     .replace(
       "{{action_url}}",
