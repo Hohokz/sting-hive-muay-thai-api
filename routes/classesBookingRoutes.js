@@ -21,4 +21,7 @@ router.patch("/:id/cancel", bookingController.cancelBooking);
 // GET /api/v1/bookings/trainers
 router.get("/trainers", bookingController.getTrainerForRequest);
 
+// GET /api/v1/bookings/:name
+router.get("/:name", bookingController.getBookingByName);
+
 module.exports = router;

@@ -849,6 +849,30 @@ const getTrainerForRequest = async () => {
   }
 };
 
+const getBookingByName = async (name) => {
+  try {
+    const booking = await ClassesBooking.findAll({
+      where: sequelize.where(
+        sequelize.fn("LOWER", sequelize.col("client_name")),
+        { [Op.like]: `%${name.toLowerCase()}%` }
+      ),
+      include: [
+        {
+          model: ClassesSchedule,
+          as: "schedule",
+          attributes: ["start_time", "end_time", "gym_enum"],
+        },
+      ],
+      attributes: { exclude: ["password"] },
+      order: [["created_date", "DESC"]],
+    });
+    return booking;
+  } catch (error) {
+    console.error("[Booking Service] Error fetching booking:", error);
+    throw new Error(`Error fetching booking: ${error.message}`);
+  }
+};
+
 module.exports = {
   createBooking,
   updateBooking,
@@ -858,4 +882,5 @@ module.exports = {
   updateBookingTrainer,
   updateBookingPayment,
   getTrainerForRequest,
+  getBookingByName,
 };

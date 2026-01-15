@@ -164,6 +164,15 @@ const getTrainerForRequest = async (req, res) => {
   }
 };
 
+const getBookingByName = async (req, res) => {
+  try {
+    const booking = await bookingService.getBookingByName(req.params.name);
+    res.status(200).json({ success: true, data: booking });
+  } catch (error) {
+    handleServiceError(res, error);
+  }
+};
+
 module.exports = {
   createBooking,
   updateBooking,
@@ -173,4 +182,5 @@ module.exports = {
   updateBookingTrainer,
   updateBookingPayment,
   getTrainerForRequest,
+  getBookingByName,
 };
