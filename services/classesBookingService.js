@@ -52,9 +52,12 @@ const _checkAvailability = async (
     throw error;
   }
 
-  const targetDate = dayjs(bookingData).startOf("day").toDate();
-  const startOfDay = dayjs(targetDate).startOf("day").toDate();
-  const endOfDay = dayjs(targetDate).endOf("day").toDate();
+  const targetDate = new Date(bookingData);
+  targetDate.setHours(7, 0, 0, 0)
+  const startOfDay = new Date(bookingData);
+  startOfDay.setHours(7, 0, 0, 0)
+  const endOfDay = new Date(bookingData);
+  endOfDay.setHours(7, 0, 0, 0)
 
   // ✅ 1.5 เช็คก่อนว่ายิมปิดทั้งยิมหรือไม่
   const gymId = gyms_id || schedule.gyms_id;
@@ -280,8 +283,6 @@ const createBooking = async (bookingData, performedByUser = null) => {
     multiple_students,
   } = bookingData;
 
-  console.log("Booking Data:", bookingData);
-
 
   // Validation: Trainer can only be assigned to private classes
   if (trainer && !is_private) {
@@ -301,7 +302,6 @@ const createBooking = async (bookingData, performedByUser = null) => {
   }
 
   const normalizedBookingDate = bookingDateObj.toDate();
-
   const transaction = await sequelize.transaction();
   let newBooking = null; // ✅ ต้องอยู่นอก try
 
@@ -314,7 +314,7 @@ const createBooking = async (bookingData, performedByUser = null) => {
       transaction,
       0, 
       capacity, 
-      date_booking,
+      normalizedBookingDate,
       null,
       false
     );
@@ -428,17 +428,12 @@ const updateBooking = async (bookingId, updateData, performedByUser = null) => {
     multiple_students,
   } = updateData;
 
-  console.log("UPDATE DATA", updateData);
-
-
   // Validation: Trainer can only be assigned to private classes
   if (trainer && !is_private) {
     const error = new Error("Trainer can only be assigned to private classes.");
     error.status = 400;
     throw error;
   }
-
-  console.log("UPDATE DATA", updateData);
 
   // ✅ [PAST DATE VALIDATION] Move to the top
   const today = dayjs().startOf("day");
@@ -452,7 +447,6 @@ const updateBooking = async (bookingId, updateData, performedByUser = null) => {
 
   const normalizedBookingDate = bookingDateObj.toDate();
 
-  console.log("[Booking Service] Updating booking:", bookingId, updateData);
 
   const transaction = await sequelize.transaction();
   let updatedBooking = null;
@@ -757,8 +751,6 @@ const updateBookingTrainer = async (bookingId, trainer, performedByUser = null) 
       updated_date: new Date(),
     });
 
-
-
     // ✅ Log Activity
     await activityLogService.createLog({
       user_id: performedByUser?.id || null,
@@ -771,10 +763,6 @@ const updateBookingTrainer = async (bookingId, trainer, performedByUser = null) 
         new_trainer: trainer,
       },
     });
-
-
-
-    console.log("[Booking Service] Trainer updated successfully");
 
     return { success: true, message: "Trainer updated successfully" };
   } catch (error) {
@@ -834,14 +822,11 @@ const updateBookingPayment = async (bookingId, payment_status, performedByUser =
 
 const getTrainerForRequest = async () => {
   try {
-    console.log("[Booking Service] Getting trainers...");
     const trainers = await User.findAll({
       where: { role: "USER" },
       attributes: { exclude: ["password"] },
       order: [["created_date", "DESC"]],
     });
-    console.log(trainers);
-    console.log("[Booking Service] Trainers fetched successfully");
     return trainers;
   } catch (error) {
     console.error("[Booking Service] Error fetching trainers:", error);
