@@ -239,8 +239,6 @@ const updateSchedule = async (id, updateData, performedByUser = null) => {
         {
           capacity: updateData.capacity,
           updated_by: performedByUser?.name || performedByUser?.username || updateData.user || "API_CALL",
-
-
         },
         {
           where: { classes_id: id },
@@ -265,9 +263,6 @@ const updateSchedule = async (id, updateData, performedByUser = null) => {
         },
       },
     });
-
-
-
     await transaction.commit();
 
 
@@ -528,123 +523,6 @@ const deleteSchedule = async (id, performedByUser = null) => {
   }
 };
 
-const createAdvancedSchedule = async (scheduleData, performedByUser = null) => {
-
-  console.log("[Service] createAdvancedSchedule hit.");
-
-  if (!ClassesBookingInAdvance.sequelize) {
-    throw new Error("Sequelize is not initialized yet.");
-  }
-
-  const t = await ClassesBookingInAdvance.sequelize.transaction();
-
-  try {
-    let gymsId = scheduleData.gyms_id;
-
-    // ✅ ถ้ามี schedule_id แต่ไม่มี gyms_id → หา gyms_id จาก schedule
-    if (scheduleData.schedule_id && !gymsId) {
-      const schedule = await ClassesSchedule.findByPk(
-        scheduleData.schedule_id,
-        { transaction: t }
-      );
-
-      if (!schedule) {
-        const error = new Error("Class schedule not found.");
-        error.status = 404;
-        throw error;
-      }
-
-      gymsId = schedule.gyms_id;
-      console.log(
-        `[Service] Derived gyms_id ${gymsId} from schedule ${scheduleData.schedule_id}`
-      );
-    }
-
-    // ✅ กรณีปิดยิมทั้งยิม → ต้องมี gyms_id
-    if (scheduleData.is_close_gym && !gymsId) {
-      const error = new Error("gyms_id is required for gym closure.");
-      error.status = 400;
-      throw error;
-    }
-
-    // ✅ Validate gym exists
-    if (gymsId) {
-      const gymExist = await Gyms.count({
-        where: { id: gymsId },
-        transaction: t,
-      });
-      if (!gymExist) {
-        const error = new Error("Gym not found");
-        error.status = 404;
-        throw error;
-      }
-    }
-
-    // ✅ เช็ค availability (ถ้าไม่ใช่ปิดยิม)
-    let warningMessage = null;
-    if (!scheduleData.is_close_gym && scheduleData.schedule_id) {
-      warningMessage = await _checkAvailability(
-        scheduleData.start_date,
-        scheduleData.end_date,
-        scheduleData.schedule_id,
-        scheduleData.is_close_gym,
-        scheduleData.capacity,
-        scheduleData.gym_enum,
-        t
-      );
-    }
-
-    const newRecord = await ClassesBookingInAdvance.create(
-      {
-        classes_schedule_id: scheduleData.schedule_id || null,
-        start_date: scheduleData.start_date,
-        end_date: scheduleData.end_date,
-        capacity: scheduleData.capacity,
-        is_close_gym: scheduleData.is_close_gym || false,
-        gyms_id: gymsId,
-        created_by: performedByUser?.name || performedByUser?.username || "ADMIN",
-      },
-      { transaction: t }
-    );
-
-
-
-    // ✅ Log Activity
-    await activityLogService.createLog({
-      user_id: performedByUser?.id || null,
-      user_name: performedByUser?.name || performedByUser?.username || "ADMIN",
-      service: "SCHEDULE",
-      action: "CREATE_ADVANCED",
-      details: {
-        advanced_id: newRecord.id,
-        schedule_id: scheduleData.schedule_id,
-        start_date: scheduleData.start_date,
-        end_date: scheduleData.end_date,
-        capacity: scheduleData.capacity,
-        is_close_gym: scheduleData.is_close_gym,
-      },
-    });
-
-
-
-    await t.commit();
-
-
-    console.log("------------------------------------------");
-    console.log("[Success] Data created:", newRecord.toJSON());
-    console.log("------------------------------------------");
-
-    return {
-      record: newRecord,
-      warningMessage: warningMessage,
-    };
-  } catch (error) {
-    if (t) await t.rollback();
-    console.error("[Service Error]:", error.message);
-    throw error;
-  }
-};
-
 const _checkAvailability = async (
   startDate,
   endDate,
@@ -785,66 +663,179 @@ const getAdvancedSchedules = async (filters = {}) => {
   };
 };
 
-const updateAdvancedSchedule = async (id, updateData, performedByUser = null) => {
+const createAdvancedSchedule = async (scheduleData, performedByUser = null) => {
 
-  console.log(`[Service] updateAdvancedSchedule hit for ID: ${id}`);
+  console.log("[Service] createAdvancedSchedule hit.");
 
-  const config = await ClassesBookingInAdvance.findByPk(id);
-  if (!config) {
-    const error = new Error("Advanced configuration not found.");
-    error.status = 404;
-    throw error;
+  if (!ClassesBookingInAdvance.sequelize) {
+    throw new Error("Sequelize is not initialized yet.");
   }
 
   const t = await ClassesBookingInAdvance.sequelize.transaction();
 
   try {
-    // Merge existing data with updates for validation
+    let gymsId = scheduleData.gyms_id;
+    let currentCapacity = 0; // ค่า Default สำหรับ old_capasity
+
+    // 1. หา gyms_id และ current capacity จาก Schedule
+    if (scheduleData.schedule_id) {
+      const schedule = await ClassesSchedule.findByPk(
+        scheduleData.schedule_id,
+        { transaction: t }
+      );
+
+      if (!schedule) {
+        const error = new Error("Class schedule not found.");
+        error.status = 404;
+        throw error;
+      }
+
+      if (!gymsId) gymsId = schedule.gyms_id;
+      
+      // ดึงค่า Capacity ปัจจุบันจากตาราง ClassesCapacity มาใส่ old_capasity
+      const capInfo = await ClassesCapacity.findOne({ 
+          where: { classes_id: scheduleData.schedule_id }, 
+          transaction: t 
+      });
+      if (capInfo) currentCapacity = capInfo.capacity;
+      
+      console.log(`[Service] Derived gyms_id ${gymsId} from schedule ${scheduleData.schedule_id}`);
+    }
+
+    // 2. Validate Gym Closure
+    if (scheduleData.is_close_gym && !gymsId) {
+      const error = new Error("gyms_id is required for gym closure.");
+      error.status = 400;
+      throw error;
+    }
+
+    // 3. Validate Gym Exists
+    if (gymsId) {
+      const gymExist = await Gyms.count({ where: { id: gymsId }, transaction: t });
+      if (!gymExist) {
+        const error = new Error("Gym not found");
+        error.status = 404;
+        throw error;
+      }
+    }
+
+    // 4. Check Availability
+    let warningMessage = null;
+    if (!scheduleData.is_close_gym && scheduleData.schedule_id) {
+      warningMessage = await _checkAvailability(
+        scheduleData.start_date,
+        scheduleData.end_date,
+        scheduleData.schedule_id,
+        scheduleData.is_close_gym,
+        scheduleData.capacity,
+        scheduleData.gym_enum,
+        t
+      );
+    }
+
+    // 5. Create Record
+    const newRecord = await ClassesBookingInAdvance.create(
+      {
+        classes_schedule_id: scheduleData.schedule_id || null,
+        start_date: scheduleData.start_date,
+        end_date: scheduleData.end_date,
+        capacity: scheduleData.capacity,
+        old_capasity: currentCapacity, // ใช้ค่าที่ดึงมา
+        is_close_gym: scheduleData.is_close_gym || false,
+        gyms_id: gymsId,
+        created_by: performedByUser?.name || performedByUser?.username || "ADMIN",
+      },
+      { transaction: t }
+    );
+
+    // 6. Log Activity
+    await activityLogService.createLog({
+      user_id: performedByUser?.id || null,
+      user_name: performedByUser?.name || performedByUser?.username || "ADMIN",
+      service: "SCHEDULE",
+      action: "CREATE_ADVANCED",
+      details: {
+        advanced_id: newRecord.id,
+        schedule_id: scheduleData.schedule_id,
+        capacity: scheduleData.capacity,
+        is_close_gym: scheduleData.is_close_gym,
+      },
+    }, { transaction: t });
+
+    // ✅ เรียกใช้ Helper Function
+    await _updateRealTimeCapacityIfToday(
+      newRecord.start_date,
+      newRecord.is_close_gym,
+      newRecord.classes_schedule_id,
+      newRecord.capacity,
+      performedByUser,
+      t
+    );
+
+    await t.commit();
+
+    console.log("------------------------------------------");
+    console.log("[Success] Data created:", newRecord.toJSON());
+    console.log("------------------------------------------");
+
+    return {
+      record: newRecord,
+      warningMessage: warningMessage,
+    };
+
+  } catch (error) {
+    if (t) await t.rollback();
+    console.error("[Service Error]:", error.message);
+    throw error;
+  } 
+};
+
+const updateAdvancedSchedule = async (id, updateData, performedByUser = null) => {
+
+  console.log(`[Service] updateAdvancedSchedule hit for ID: ${id}`);
+
+  const t = await ClassesBookingInAdvance.sequelize.transaction();
+
+  try {
+    // 1. Find Record
+    const config = await ClassesBookingInAdvance.findByPk(id, { transaction: t });
+    
+    if (!config) {
+      const error = new Error("Advanced configuration not found.");
+      error.status = 404;
+      throw error;
+    }
+
+    // 2. Prepare Next Data
     const nextData = {
       start_date: updateData.start_date || config.start_date,
       end_date: updateData.end_date || config.end_date,
-      capacity:
-        updateData.capacity !== undefined
-          ? updateData.capacity
-          : config.capacity,
-      is_close_gym:
-        updateData.is_close_gym !== undefined
-          ? updateData.is_close_gym
-          : config.is_close_gym,
-      classes_schedule_id: updateData.schedule_id || config.classes_schedule_id, // allow mapping schedule_id from body
+      capacity: updateData.capacity !== undefined ? updateData.capacity : config.capacity,
+      is_close_gym: updateData.is_close_gym !== undefined ? updateData.is_close_gym : config.is_close_gym,
+      classes_schedule_id: updateData.schedule_id || config.classes_schedule_id, 
       gyms_id: updateData.gyms_id || config.gyms_id,
     };
 
-    // If switching to gym closure, enforce rules
+    // 3. Validation
     if (nextData.is_close_gym) {
-      // Must have gyms_id (usually already there)
       if (!nextData.gyms_id) {
         const error = new Error("gyms_id is required for gym closure.");
         error.status = 400;
         throw error;
       }
-      // Should clear schedule if it was set? Or just ignore it?
-      // Best to nullify schedule_id if closing gym entirely?
-      // User logic: "case 2: close gym -> schedule_id invalid/null"
-      // Let's force null if closing gym
-      // nextData.classes_schedule_id = null; // Optional: Enforce this policy?
     } else {
-      // Not closing gym -> must have schedule_id
       if (!nextData.classes_schedule_id) {
-        const error = new Error(
-          "schedule_id is required for capacity adjustment."
-        );
+        const error = new Error("schedule_id is required for capacity adjustment.");
         error.status = 400;
         throw error;
       }
 
-      // Validation check availability
-      // Only check if relevant fields changed
-      const isScheduleChanged =
-        updateData.schedule_id &&
-        updateData.schedule_id !== config.classes_schedule_id;
-      const isDateChanged = updateData.start_date || updateData.end_date;
-      const isCapacityChanged = updateData.capacity !== undefined;
+      // Check Availability if changed
+      const isScheduleChanged = nextData.classes_schedule_id !== config.classes_schedule_id;
+      const isDateChanged = 
+          new Date(nextData.start_date).getTime() !== new Date(config.start_date).getTime() ||
+          new Date(nextData.end_date).getTime() !== new Date(config.end_date).getTime();
+      const isCapacityChanged = nextData.capacity !== config.capacity;
 
       if (isScheduleChanged || isDateChanged || isCapacityChanged) {
         await _checkAvailability(
@@ -853,13 +844,13 @@ const updateAdvancedSchedule = async (id, updateData, performedByUser = null) =>
           nextData.classes_schedule_id,
           nextData.is_close_gym,
           nextData.capacity,
-          updateData.gym_enum, // might be missing if not passed, but _check doesn't strictly need it for error logic inside
+          updateData.gym_enum, 
           t
         );
       }
     }
 
-    // 3. Preserve old values for logging
+    // Keep old values for log
     const oldValues = {
       start_date: config.start_date,
       end_date: config.end_date,
@@ -869,6 +860,7 @@ const updateAdvancedSchedule = async (id, updateData, performedByUser = null) =>
       gyms_id: config.gyms_id,
     };
 
+    // 4. Update Database
     await config.update(
       {
         start_date: nextData.start_date,
@@ -883,9 +875,7 @@ const updateAdvancedSchedule = async (id, updateData, performedByUser = null) =>
       { transaction: t }
     );
 
-
-
-    // ✅ Log Activity
+    // 5. Log Activity
     await activityLogService.createLog({
       user_id: performedByUser?.id || null,
       user_name: performedByUser?.name || performedByUser?.username || "ADMIN",
@@ -896,16 +886,60 @@ const updateAdvancedSchedule = async (id, updateData, performedByUser = null) =>
         old_values: oldValues,
         new_values: nextData,
       },
-    });
+    }, { transaction: t });
 
-
+    // ✅ เรียกใช้ Helper Function (ใช้ config ที่ update แล้ว)
+    await _updateRealTimeCapacityIfToday(
+      config.start_date,
+      config.is_close_gym,
+      config.classes_schedule_id,
+      config.capacity,
+      performedByUser,
+      t
+    );
 
     await t.commit();
-
     return config;
+
   } catch (error) {
     if (t) await t.rollback();
     throw error;
+  }
+};
+
+const _updateRealTimeCapacityIfToday = async (
+  startDate,
+  isCloseGym,
+  scheduleId,
+  capacity,
+  performedByUser,
+  t
+) => {
+  try {
+    const todayStr = new Date().toISOString().split("T")[0];
+    // แปลง startDate เป็น string (รองรับทั้ง Date object และ string)
+    const startStr = new Date(startDate).toISOString().split("T")[0];
+
+    // เงื่อนไข: วันที่ตรงกับวันนี้ + ไม่ใช่การปิดยิม + มี schedule_id
+    if (startStr === todayStr && !isCloseGym && scheduleId) {
+      console.log(`[Auto Update] Start date (${startStr}) is TODAY. Updating ClassesCapacity...`);
+      
+      const userName = performedByUser?.name || performedByUser?.username || "ADMIN";
+
+      await ClassesCapacity.update(
+        {
+          capacity: capacity,
+          updated_by: userName,
+        },
+        {
+          where: { classes_id: scheduleId },
+          transaction: t, // 🔥 สำคัญมาก: ต้องใช้ transaction เดียวกัน
+        }
+      );
+    }
+  } catch (error) {
+    console.error("[Helper Error] Failed to auto-update capacity:", error.message);
+    throw error; 
   }
 };
 

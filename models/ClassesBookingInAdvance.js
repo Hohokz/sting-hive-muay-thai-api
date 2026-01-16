@@ -23,6 +23,7 @@ const ClassesBookingInAdvance = sequelize.define(
       defaultValue: false,
     },
     capacity: { type: DataTypes.INTEGER, allowNull: true },
+    old_capasity:{type: DataTypes.INTEGER, allowNull: true},
     gyms_id: {
       type: DataTypes.INTEGER,
       allowNull: false,
