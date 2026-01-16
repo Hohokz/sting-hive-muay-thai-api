@@ -52,12 +52,9 @@ const _checkAvailability = async (
     throw error;
   }
 
-  const targetDate = new Date(bookingData);
-  targetDate.setHours(7, 0, 0, 0)
-  const startOfDay = new Date(bookingData);
-  startOfDay.setHours(7, 0, 0, 0)
-  const endOfDay = new Date(bookingData);
-  endOfDay.setHours(7, 0, 0, 0)
+  const targetDate = bookingData;
+  const startOfDay = bookingData;
+  const endOfDay = bookingData;
 
   // ✅ 1.5 เช็คก่อนว่ายิมปิดทั้งยิมหรือไม่
   const gymId = gyms_id || schedule.gyms_id;
