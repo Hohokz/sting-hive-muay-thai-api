@@ -342,6 +342,8 @@ const createBooking = async (bookingData, performedByUser = null) => {
       throw error;
     }
 
+    console.log("performerName", performedByUser);
+
     // 3. Create booking
     newBooking = await ClassesBooking.create(
       {
@@ -364,7 +366,7 @@ const createBooking = async (bookingData, performedByUser = null) => {
     );
 
     // ✅ Log Activity
-    const performerName = performedByUser?.name || performedByUser?.username || (client_name ? `${client_name} (GUEST)` : "CLIENT_APP");
+    const performerName = performedByUser?.name || performedByUser?.username || (client_name ? `${client_name}` : "CLIENT_APP");
 
 
     await activityLogService.createLog({
@@ -424,6 +426,10 @@ const updateBooking = async (bookingId, updateData, performedByUser = null) => {
     trainer,
     multiple_students,
   } = updateData;
+
+  console.log("---------------- [UPDATE] Update Booking DEBUG ----------------");
+  console.log("👤 Performed By (performedByUser):", performedByUser); 
+  console.log("📦 Request Body:", JSON.stringify(updateData, null, 2));
 
   // Validation: Trainer can only be assigned to private classes
   if (trainer && !is_private) {

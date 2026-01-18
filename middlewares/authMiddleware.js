@@ -31,3 +31,19 @@ exports.authorizeRole = (roles) => {
         next();
     };
 };
+
+exports.extractUserIfPresent = (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+
+    if (!token) {
+        return next();
+    }
+    try {
+        const user = authService.verifyAccessToken(token);
+        req.user = user;
+        next();
+    } catch (err) {
+        return res.status(403).json({ message: 'Invalid or Expired Token (Please Login Again)' });
+    }
+};

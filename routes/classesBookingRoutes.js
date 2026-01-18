@@ -2,21 +2,21 @@
 const express = require("express");
 const router = express.Router();
 const bookingController = require("../controllers/classesBookingController");
+const { extractUserIfPresent } = require("../middlewares/authMiddleware");
 
 // GET /api/v1/bookings?classes_schedule_id=...
 router.get("/", bookingController.getBookings);
 
 // POST /api/v1/bookings
-router.post("/", bookingController.createBooking);
-router.put("/updateBookingTrainer/:id", bookingController.updateBookingTrainer);
-router.put("/updateBookingNote/:id", bookingController.patchBookingNote);
-router.put("/:id", bookingController.updateBooking);
-router.put("/:id/payment", bookingController.updateBookingPayment);
-
-router.patch("/:id/note", bookingController.patchBookingNote);
+router.post("/", extractUserIfPresent, bookingController.createBooking);
+router.put("/updateBookingTrainer/:id",extractUserIfPresent, bookingController.updateBookingTrainer);
+router.put("/updateBookingNote/:id",extractUserIfPresent, bookingController.patchBookingNote);
+router.put("/:id", extractUserIfPresent, bookingController.updateBooking);
+router.put("/:id/payment", extractUserIfPresent, bookingController.updateBookingPayment);
+router.patch("/:id/note", extractUserIfPresent, bookingController.patchBookingNote);
 
 // PATCH /api/v1/bookings/:id/cancel
-router.patch("/:id/cancel", bookingController.cancelBooking);
+router.patch("/:id/cancel", extractUserIfPresent, bookingController.cancelBooking);
 
 // GET /api/v1/bookings/trainers
 router.get("/trainers", bookingController.getTrainerForRequest);
