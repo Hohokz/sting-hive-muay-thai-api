@@ -2,23 +2,17 @@ const authService = require('../services/authService');
 const User = require('../models/User');
 const activityLogService = require('../services/activityLogService');
 
-
 exports.login = async (req, res) => {
     try {
         const { username, password } = req.body;
 
         const user = await User.findOne({ where: { username } });
-
-        if (!user) {
-            return res.status(401).json({ message: 'Invalid credentials' });
-        }
+        if (!user) return res.status(401).json({ message: 'Invalid credentials' });
 
         const isMatch = await authService.comparePassword(password, user.password);
+        if (!isMatch) return res.status(401).json({ message: 'Invalid credentials' });
 
-        if (!isMatch) {
-            return res.status(401).json({ message: 'Invalid credentials' });
-        }
-
+        // สร้างทั้ง 2 Token
         const tokens = authService.generateTokens(user);
 
         // ✅ Log Activity
@@ -26,18 +20,21 @@ exports.login = async (req, res) => {
             user_id: user.id,
             user_name: user.name || user.username,
             service: 'USER',
-
             action: 'LOGIN',
             ip_address: req.ip,
-            details: {
-                role: user.role
-            }
+            details: { role: user.role }
         });
 
-        // Optional: Save refresh token to DB or send as HttpOnly cookie
+        // 🔥 ความปลอดภัย: ส่ง Refresh Token ผ่าน HttpOnly Cookie
+        // Browser จะเก็บให้อัตโนมัติ JS อ่านไม่ได้ (กันขโมย)
+        res.cookie('jwt', tokens.refreshToken, {
+            httpOnly: true,
+            secure: true, // ต้องเป็น true ใน Production (HTTPS)
+            sameSite: 'None', // หรือ 'Strict' ถ้าเป็น Domain เดียวกัน
+            maxAge: 24 * 60 * 60 * 1000 // 1 วัน
+        });
 
-        // For now, sending both in response body as requested
-
+        // ส่งกลับแค่ Access Token ใน Body
         res.json({
             message: 'Login successful',
             user: {
@@ -46,8 +43,7 @@ exports.login = async (req, res) => {
                 name: user.name,
                 role: user.role
             },
-
-            ...tokens
+            accessToken: tokens.accessToken
         });
 
     } catch (error) {
@@ -58,31 +54,33 @@ exports.login = async (req, res) => {
 
 exports.refreshToken = async (req, res) => {
     try {
-        const { refreshToken } = req.body;
+        // 🔥 รับ Refresh Token จาก Cookie แทน Body
+        const refreshToken = req.cookies.jwt;
 
         if (!refreshToken) {
-            return res.status(400).json({ message: 'Refresh Token is required' });
+            return res.status(401).json({ message: 'Refresh Token required' });
         }
 
         let decoded;
         try {
+            // เช็คว่าหมดอายุ 24 ชม. หรือยัง?
             decoded = authService.verifyRefreshToken(refreshToken);
         } catch (err) {
-            return res.status(403).json({ message: 'Invalid or expired Refresh Token' });
+            // ❌ ถ้าหมดอายุแล้ว ให้ลบ Cookie และดีด User ออก
+            res.clearCookie('jwt', { httpOnly: true, secure: true, sameSite: 'None' });
+            return res.status(403).json({ message: 'Session expired. Please login again.' });
         }
 
         const user = await User.findByPk(decoded.id);
+        if (!user) return res.status(404).json({ message: 'User not found' });
 
-        if (!user) {
-            return res.status(404).json({ message: 'User not found' });
-        }
+        // ✅ แก้ไขจุดนี้: สร้าง *เฉพาะ* Access Token ใหม่
+        // ❌ ห้ามเรียก generateTokens() หรือ generateRefreshToken() ใหม่เด็ดขาด!
+        const newAccessToken = authService.generateAccessToken(user);
 
-        // Generate new Access Token (and optionally new Refresh Token)
-        const newTokens = authService.generateTokens(user);
-
+        // ส่ง Access Token ใบใหม่กลับไป
         res.json({
-            accessToken: newTokens.accessToken,
-            refreshToken: newTokens.refreshToken // Rotation: sending new refresh token
+            accessToken: newAccessToken
         });
 
     } catch (error) {
@@ -92,6 +90,11 @@ exports.refreshToken = async (req, res) => {
 };
 
 exports.logout = (req, res) => {
-    // Client should delete tokens. Server side could blacklist token if implemented.
+    // 🔥 สั่ง Browser ลบ Cookie ทิ้ง
+    res.clearCookie('jwt', { 
+        httpOnly: true, 
+        secure: true, 
+        sameSite: 'None' 
+    });
     res.json({ message: 'Logged out successfully' });
 };

@@ -11,7 +11,7 @@ exports.comparePassword = async (password, hash) => {
   return await bcrypt.compare(password, hash);
 };
 
-exports.generateTokens = (user) => {
+exports.generateAccessToken = (user) => {
   const payload = {
     id: user.id,
     username: user.username,
@@ -19,15 +19,24 @@ exports.generateTokens = (user) => {
     role: user.role,
   };
 
-
-  const accessToken = jwt.sign(payload, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRES_IN || "15m",
+  return jwt.sign(payload, process.env.JWT_SECRET, {
+    expiresIn: process.env.JWT_EXPIRES_IN || "15m", 
   });
+};
 
-  const refreshToken = jwt.sign(payload, process.env.JWT_REFRESH_SECRET, {
-    expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || "7d",
+exports.generateRefreshToken = (user) => {
+  const payload = {
+    id: user.id,
+  };
+
+  return jwt.sign(payload, process.env.JWT_REFRESH_SECRET, {
+    expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || "1d", 
   });
+};
 
+exports.generateTokens = (user) => {
+  const accessToken = this.generateAccessToken(user);
+  const refreshToken = this.generateRefreshToken(user);
   return { accessToken, refreshToken };
 };
 
