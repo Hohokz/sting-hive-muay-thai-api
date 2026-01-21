@@ -510,6 +510,7 @@ const getScheduleRealtimeAvailability = async (
       start_date: { [Op.lte]: checkTime },
       end_date: { [Op.gte]: checkTime },
     },
+    order: [["created_date", "DESC"]],
     transaction,
   });
 
@@ -533,8 +534,11 @@ const getScheduleRealtimeAvailability = async (
       start_date: { [Op.lte]: checkTime },
       end_date: { [Op.gte]: checkTime },
     },
+    order: [["created_date", "DESC"]],
     transaction,
   });
+
+
 
   // Calculate Max Capacity
   let maxCapacity = 0;
