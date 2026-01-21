@@ -12,6 +12,7 @@ const dayjs = require("dayjs");
 const utc = require("dayjs/plugin/utc");
 
 const activityLogService = require("./activityLogService");
+const advancedScheduleJob = require("../job/advancedScheduleJob");
 
 dayjs.extend(utc);
 
@@ -333,36 +334,11 @@ const getAvailableSchedulesByBookingDate = async (
   isPrivateClass
 ) => {
   try {
-    const targetDate = dayjs(date);
-
-    // ✅ คำนวณ Start/End of Day ไว้ก่อนเลย เพื่อใช้ในการ Query Advance Config
-    const startOfDay = targetDate.startOf("day").toDate();
-    const endOfDay = targetDate.endOf("day").toDate();
-
-    console.log("--------------- DEBUG AVAILABLE SCHEDULES ---------------");
+    console.log("--------------- GET AVAILABLE SCHEDULES (SHARED LOGIC) ---------------");
     console.log("Input Date:", date);
-    console.log("Target Date:", targetDate.toISOString());
-    console.log("StartOfDay:", startOfDay.toISOString());
-    console.log("EndOfDay:", endOfDay.toISOString());
     console.log("GymEnum:", gymEnum);
 
-    // 1. เช็คก่อนว่ายิมปิดทั้งยิมไหม
-    // ใช้ startOfDay เพื่อให้เวลา (Time component) ไม่ส่งผลต่อการหา (เช่น ส่งมา 03:00 น. แต่ใน DB เก็บ 00:00 น.)
-    const gymClosures = await ClassesBookingInAdvance.findAll({
-      where: {
-        is_close_gym: true,
-        classes_schedule_id: null, // ปิดทั้งยิม
-        start_date: { [Op.lte]: startOfDay },
-        end_date: { [Op.gte]: startOfDay },
-      },
-    });
-
-    // สร้าง Set ของ gyms_id ที่ปิด
-    const closedGymIds = new Set(gymClosures.map((g) => g.gyms_id));
-    console.log("Found Gym Closures:", gymClosures.length);
-    console.log("Closed Gym IDs:", Array.from(closedGymIds));
-
-    // 2. ดึง schedules ทั้งหมด
+    // 1. Fetch Base Schedules
     const whereSchedule = {};
     if (gymEnum) {
       whereSchedule.gym_enum = gymEnum;
@@ -373,76 +349,27 @@ const getAvailableSchedulesByBookingDate = async (
 
     const schedules = await ClassesSchedule.findAll({
       where: whereSchedule,
-      include: [
-        {
-          model: ClassesCapacity,
-          as: "capacity_data",
-          required: true,
-          attributes: ["id", "capacity"],
-        },
-      ],
-      attributes: ["id", "start_time", "end_time", "gyms_id", "gym_enum"],
       order: [["start_time", "ASC"]],
     });
-    console.log("Found Base Schedules:", schedules.length);
 
-    // 3. ดึง advance configs ที่ active ในวันนี้
-    // เช่นกัน ใช้ startOfDay ในการ query เพื่อความแม่นยำ
-    const advanceConfigs = await ClassesBookingInAdvance.findAll({
-      where: {
-        classes_schedule_id: { [Op.not]: null }, // เฉพาะ config ที่ระบุ schedule
-        is_close_gym: false,
-        start_date: { [Op.lte]: startOfDay },
-        end_date: { [Op.gte]: startOfDay },
-      },
-    });
+    console.log(`Found ${schedules.length} base schedules.`);
 
-    // สร้าง map ของ schedule_id -> capacity
-    const advanceCapacityMap = new Map();
-    for (const config of advanceConfigs) {
-      advanceCapacityMap.set(config.classes_schedule_id, config.capacity);
-    }
-
-    console.log("advanceCapacityMap", advanceCapacityMap);
-
-    // 4. ดึง booking counts สำหรับวันนี้
-    // startOfDay, endOfDay คำนวณไว้ข้างบนแล้ว
-
-    const bookingCounts = await ClassesBooking.findAll({
-      where: {
-        booking_status: { [Op.notIn]: ["CANCELED", "FAILED"] },
-        date_booking: { [Op.between]: [startOfDay, endOfDay] },
-      },
-      attributes: [
-        "classes_schedule_id",
-        [Sequelize.fn("SUM", Sequelize.col("capacity")), "total_booked"],
-      ],
-      group: ["classes_schedule_id"],
-      raw: true,
-    });
-
-    // สร้าง map ของ schedule_id -> booked count
-    const bookedMap = new Map();
-    for (const b of bookingCounts) {
-      bookedMap.set(b.classes_schedule_id, parseInt(b.total_booked) || 0);
-    }
-
-    // 5. Filter และ map ผลลัพธ์
+    // 2. Iterate and Calculate Availability using Shared Function
     const availableSchedules = [];
-    console.log("closedGymIds", closedGymIds);
+
     for (const schedule of schedules) {
-      if (closedGymIds.has(schedule.gyms_id)) {
-        continue;
+      // Call Shared Logic
+      // Note: This is N+1 query pattern, but given low N (classes per day), it's acceptable for consistency.
+      const availability = await getScheduleRealtimeAvailability(schedule.id, date);
+
+      // If Gym/Class is closed, we might still want to show it as "Closed" or filter it out.
+      // Based on previous logic, we skip if closed by gym-wide rule.
+
+      if (availability.isCloseGym) {
+          console.log(`[Skip] Gym Closed for Schedule ${schedule.id}`);
+          continue; 
       }
 
-      const maxCapacity = advanceCapacityMap.has(schedule.id)
-        ? advanceCapacityMap.get(schedule.id)
-        : schedule.capacity_data?.capacity || 0;
-
-      const bookedCount = bookedMap.get(schedule.id) || 0;
-
-      // ✅ เอา if (bookedCount < maxCapacity) ออก
-      // แล้ว push ลง array ตรงๆ เลย
       availableSchedules.push({
         id: schedule.id,
         start_time: schedule.start_time,
@@ -450,14 +377,21 @@ const getAvailableSchedulesByBookingDate = async (
         gym_enum: schedule.gym_enum,
         gyms_id: schedule.gyms_id,
         capacity_data: {
-          id: schedule.capacity_data?.id,
-          capacity: maxCapacity,
+          id: schedule.capacity_data?.id, // Note: might need to fetch if not included in shared
+          capacity: availability.maxCapacity,
         },
-        booking_count: bookedCount,
-        available_seats: Math.max(0, maxCapacity - bookedCount),
-        // เพิ่ม flag นี้ไปให้หน้าบ้านเช็คง่ายๆ
-        is_full: bookedCount >= maxCapacity,
+        booking_count: availability.currentBookingCount,
+        available_seats: availability.availableSeats,
+        is_full: availability.availableSeats <= 0,
       });
+
+      console.log(
+        `[${schedule.gym_enum} ${schedule.start_time}-${schedule.end_time} (${
+          schedule.is_private_class ? "Private" : "Group"
+        })] ID: ${schedule.id} | Max: ${availability.maxCapacity} | Booked: ${
+          availability.currentBookingCount
+        } | Avail: ${availability.availableSeats}`
+      );
     }
 
     return availableSchedules;
@@ -521,6 +455,134 @@ const deleteSchedule = async (id, performedByUser = null) => {
     }
     throw new Error("Internal server error during schedule deletion.");
   }
+};
+
+// =================================================================
+// 3. SHARED AVAILABILITY LOGIC
+// =================================================================
+
+/**
+ * [SHARED] ฟังก์ชันกลางสำหรับคำนวณ Availability ของ Schedule 1 รายการ
+ * ใช้ทั้งตอน "แสดงผลหน้าเว็บ" และ "ตรวจสอบก่อนจอง"
+ *
+ * @param {string} scheduleId
+ * @param {Date|string} date - วันที่ที่ต้องการเช็ค
+ * @param {object} options - { transaction, lock }
+ * @returns {Promise<object>} { maxCapacity, currentBookingCount, availableSeats, isCloseGym, isClassClosed, schedule }
+ */
+const getScheduleRealtimeAvailability = async (
+  scheduleId,
+  date,
+  options = {}
+) => {
+  const { transaction, lock } = options;
+  const targetDate = dayjs(date);
+
+  // 1. Time Logic (Standardized)
+  // Check Configs at 07:00 AM (Booking System Standard)
+  const checkTime = targetDate.startOf("day").hour(7).toDate();
+  // Count Bookings for Whole Day (00:00 - 23:59)
+  const startOfDay = targetDate.startOf("day").toDate();
+  const endOfDay = targetDate.endOf("day").toDate();
+
+  // 2. Fetch Schedule (With Lock if requested)
+  // Lock is crucial for avoiding Race Conditions during Booking
+  const queryOptions = { transaction };
+  if (lock && transaction) {
+    queryOptions.lock = transaction.LOCK.UPDATE;
+  }
+
+  // 🔴 Remove include to avoid "FOR UPDATE cannot be applied to the nullable side of an outer join"
+  const schedule = await ClassesSchedule.findByPk(scheduleId, queryOptions);
+
+  if (!schedule) {
+    throw new Error(`Schedule ${scheduleId} not found`);
+  }
+
+  const gymId = schedule.gyms_id;
+
+  // 3. Check Gym Closure (Entire Gym)
+  const gymClosed = await ClassesBookingInAdvance.findOne({
+    where: {
+      gyms_id: gymId,
+      is_close_gym: true,
+      classes_schedule_id: null, // ปิดทั้งยิม
+      start_date: { [Op.lte]: checkTime },
+      end_date: { [Op.gte]: checkTime },
+    },
+    transaction,
+  });
+
+  if (gymClosed) {
+    return {
+      schedule,
+      isCloseGym: true,
+      isClassClosed: true,
+      maxCapacity: 0,
+      currentBookingCount: 0,
+      availableSeats: 0,
+      closuresReason: "Gym Closed",
+    };
+  }
+
+  // 4. Check Advanced Configuration (Specific Class Capacity)
+  const advancedConfig = await ClassesBookingInAdvance.findOne({
+    where: {
+      classes_schedule_id: scheduleId,
+      is_close_gym: false,
+      start_date: { [Op.lte]: checkTime },
+      end_date: { [Op.gte]: checkTime },
+    },
+    transaction,
+  });
+
+  // Calculate Max Capacity
+  let maxCapacity = 0;
+  if (advancedConfig) {
+    maxCapacity = advancedConfig.capacity;
+    if (advancedConfig.is_close_gym) {
+        return {
+            schedule,
+            isCloseGym: false,
+            isClassClosed: true,
+            maxCapacity: 0,
+            currentBookingCount: 0,
+            availableSeats: 0,
+            closuresReason: "Class Closed",
+        };
+    }
+  } else {
+    // Default Capacity - Fetch Separately
+    const capacityData = await ClassesCapacity.findOne({
+        where: { classes_id: scheduleId },
+        transaction
+    });
+    maxCapacity = capacityData?.capacity || 0;
+  }
+
+  // 5. Count Current Bookings
+  const currentBookingCount =
+    (await ClassesBooking.sum("capacity", {
+      where: {
+        classes_schedule_id: scheduleId,
+        date_booking: {
+          [Op.between]: [startOfDay, endOfDay],
+        },
+        booking_status: {
+          [Op.notIn]: ["CANCELED", "FAILED"],
+        },
+      },
+      transaction,
+    })) || 0;
+
+  return {
+    schedule,
+    isCloseGym: false,
+    isClassClosed: false,
+    maxCapacity,
+    currentBookingCount,
+    availableSeats: Math.max(0, maxCapacity - currentBookingCount),
+  };
 };
 
 const _checkAvailability = async (
@@ -976,6 +1038,10 @@ const deleteAdvancedSchedule = async (id, performedByUser = null) => {
   return { message: "Configuration deleted successfully." };
 };
 
+const activeScheduleInAdvance = async (id, performedByUser = null) => {
+  
+ return await advancedScheduleJob.runAdvancedScheduleJob();
+}
 // =================================================================
 // 3. EXPORTS
 // =================================================================
@@ -989,6 +1055,8 @@ module.exports = {
   getAvailableSchedulesByBookingDate,
   createAdvancedSchedule,
   getAdvancedSchedules,
-  updateAdvancedSchedule, // ✅ export
-  deleteAdvancedSchedule, // ✅ export
+  updateAdvancedSchedule,
+  deleteAdvancedSchedule,
+  getScheduleRealtimeAvailability, // Export Shared Logic
+  activeScheduleInAdvance,
 };

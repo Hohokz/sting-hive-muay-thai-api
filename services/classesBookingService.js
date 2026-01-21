@@ -10,7 +10,7 @@ const { Op } = require("sequelize");
 const fs = require("fs");
 const path = require("path");
 const { sendBookingConfirmationEmail } = require("../utils/emailService");
-const { getSchedulesById } = require("../services/classesScheduleService");
+const { getSchedulesById, getScheduleRealtimeAvailability } = require("../services/classesScheduleService");
 const activityLogService = require("../services/activityLogService");
 
 
@@ -34,108 +34,44 @@ dayjs.extend(utc);
 const _checkAvailability = async (
   classes_schedule_id,
   transaction,
-  capacity, // 🟢 ยอดใหม่ที่ลูกค้า "ขอจอง" (Requested Seats)
-  newBookingCapacity, // 🔴 ยอดเก่าที่ลูกค้า "เคยจองไว้" (Previous Qty) -> ชื่อตัวแปรอาจชวนงง แต่ตาม Context คือยอดเก่า
+  capacity,
+  newBookingCapacity,
   bookingData,
   gyms_id,
   isUpdate
 ) => {
-  // ✅ 1. LOCK เฉพาะ schedule
-  const schedule = await ClassesSchedule.findByPk(classes_schedule_id, {
-    transaction,
-    lock: transaction.LOCK.UPDATE,
-  });
+  // ✅ 1. Use Shared Availability Logic
+  // This handles: Lock, Gym Closure, Advance Config, Capacity Check, Current Bookings
+  const { 
+    maxCapacity, 
+    currentBookingCount, 
+    isCloseGym, 
+    isClassClosed, 
+    closuresReason 
+  } = await getScheduleRealtimeAvailability(
+    classes_schedule_id, 
+    bookingData, 
+    { transaction, lock: true }
+  );
 
-  if (!schedule) {
-    const error = new Error("Class schedule not found.");
-    error.status = 404;
-    throw error;
-  }
-
-  const targetDate = bookingData;
-  const startOfDay = bookingData;
-  const endOfDay = bookingData;
-
-  // ✅ 1.5 เช็คก่อนว่ายิมปิดทั้งยิมหรือไม่
-  const gymId = gyms_id || schedule.gyms_id;
-  const gymClosed = await ClassesBookingInAdvance.findOne({
-    where: {
-      gyms_id: gymId,
-      is_close_gym: true,
-      classes_schedule_id: null,
-      start_date: { [Op.lte]: targetDate },
-      end_date: { [Op.gte]: targetDate },
-    },
-    transaction,
-  });
-
-  if (gymClosed) {
-    const error = new Error("This gym is closed on the selected date.");
+  // ✅ 2. Validate Closures
+  if (isCloseGym || isClassClosed) {
+    const error = new Error(
+      closuresReason === "Gym Closed" 
+        ? "This gym is closed on the selected date." 
+        : "This class is closed on the selected date."
+    );
     error.status = 409;
     throw error;
   }
 
-  // ✅ 2. หา Max Capacity (Advanced -> Normal)
-  let maxCapacity;
-
-  const advancedConfig = await ClassesBookingInAdvance.findOne({
-    where: {
-      classes_schedule_id,
-      is_close_gym: false,
-      start_date: { [Op.lte]: targetDate },
-      end_date: { [Op.gte]: targetDate },
-    },
-    transaction,
-  });
-
-  if (advancedConfig) {
-    console.log(`[Check] Using Advanced Capacity: ${advancedConfig.capacity}`);
-    maxCapacity = advancedConfig.capacity;
-
-    // Note: ตรงนี้ advancedConfig query มาแบบ is_close_gym: false อยู่แล้ว เงื่อนไขนี้อาจจะไม่จำเป็นต้องเช็คซ้ำ แต่ใส่ไว้ไม่เสียหาย
-    if (advancedConfig.is_close_gym) {
-      const error = new Error("This class is closed on the selected date.");
-      error.status = 409;
-      throw error;
-    }
-  } else {
-    const capacityData = await ClassesCapacity.findOne({
-      where: { classes_id: classes_schedule_id },
-      transaction,
-    });
-
-    if (!capacityData) {
-      const error = new Error("Capacity not found for this class.");
-      error.status = 404;
-      throw error;
-    }
-    maxCapacity = capacityData.capacity;
-  }
-
-  // ✅ 3. นับจำนวน Booking ที่มีอยู่ในปัจจุบัน (รวมของเราด้วย ถ้าเป็นการ Update)
-  const currentBookingCount =
-    (await ClassesBooking.sum("capacity", {
-      where: {
-        classes_schedule_id,
-        date_booking: {
-          [Op.between]: [startOfDay, endOfDay],
-        },
-        booking_status: {
-          [Op.notIn]: ["CANCELED", "FAILED"],
-        },
-      },
-      transaction,
-    })) || 0; // ใส่ || 0 กันเหนียวเผื่อ return null
-
-  // ✅ 4. แก้ไขการ Map ตัวแปร (สลับให้ตรงกับที่ส่งมา)
+  // ✅ 3. Capacity Calculation (Swap Logic for Update)
   // -------------------------------------------------------------
 
   // ยอดเดิมใน DB (Previous/Old):
-  // จาก Log ตัวแปร 'capacity' ดูเหมือนจะเก็บค่าเดิม (1) อยู่
   const previousQty = isUpdate ? capacity : 0;
 
   // ยอดใหม่ที่ขอจอง (Requested/New):
-  // จาก Log ตัวแปร 'newBookingCapacity' คือค่าใหม่ที่คุณส่งมา (2)
   const requestedSeats = newBookingCapacity;
 
   // -------------------------------------------------------------
@@ -149,14 +85,15 @@ const _checkAvailability = async (
 
   // -------------------------------------------------------------
 
-  console.log("----------------Debug Capacity (Fixed Swap)----------------");
-  console.log("Current DB Count (Total):", currentBookingCount); // 1
-  console.log("My Old Qty (To remove):", previousQty); // ควรเป็น 1 (ค่าเดิม)
-  console.log("Seats taken by others:", seatsTakenByOthers); // ควรเป็น 0 (1-1)
-  console.log("My New Request (To add):", requestedSeats); // ควรเป็น 2 (ค่าใหม่)
-  console.log("Total after this booking:", totalAfterBooking); // ควรเป็น 2 (0+2)
-  console.log("Max Capacity:", maxCapacity); // 1
-  console.log("-----------------------------------------------------------");
+  console.log("----------------Debug Capacity (Shared Logic)----------------");
+  console.log("Date Checked:", bookingData);
+  console.log("Current DB Count (Total):", currentBookingCount);
+  console.log("My Old Qty (To remove):", previousQty);
+  console.log("Seats taken by others:", seatsTakenByOthers);
+  console.log("My New Request (To add):", requestedSeats);
+  console.log("Total after this booking:", totalAfterBooking);
+  console.log("Max Capacity:", maxCapacity);
+  console.log("-------------------------------------------------------------");
 
   if (totalAfterBooking > maxCapacity) {
     // คำนวณที่นั่งที่เหลือจริงๆ ให้ User เห็น (Max - คนอื่นจอง)
@@ -279,6 +216,8 @@ const createBooking = async (bookingData, performedByUser = null) => {
     trainer,
     multiple_students,
   } = bookingData;
+
+  console.log("🚀 [Booking Data]", bookingData);
 
 
   // Validation: Trainer can only be assigned to private classes

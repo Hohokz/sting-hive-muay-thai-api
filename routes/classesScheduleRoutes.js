@@ -43,4 +43,8 @@ router.put("/in-advance/:id", scheduleController.updateAdvancedSchedule);
 // ลบ Advance Config
 router.delete("/in-advance/:id", scheduleController.deleteAdvancedSchedule);
 
+// 9. [READ] GET /api/v1/schedules/in-advance/:id
+// แก้ไข Advance Config
+router.get("/in-advance/active", scheduleController.activeScheduleInAdvance);
+
 module.exports = router;

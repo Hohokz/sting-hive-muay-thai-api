@@ -294,6 +294,14 @@ const deleteAdvancedSchedule = async (req, res) => {
   }
 };
 
+const activeScheduleInAdvance = async (req, res) => {
+  try {
+    return await scheduleService.activeScheduleInAdvance();
+  } catch (error) {
+    handleServiceError(res, error);
+  }
+};
+
 module.exports = {
   createSchedule,
   getSchedules,
@@ -304,4 +312,5 @@ module.exports = {
   getAdvancedSchedules,
   updateAdvancedSchedule,
   deleteAdvancedSchedule,
+  activeScheduleInAdvance,
 };

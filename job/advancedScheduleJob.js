@@ -3,9 +3,11 @@ const { Op, Sequelize } = require("sequelize");
 
 // Import Models เพียงครั้งเดียว (ตรวจสอบ Path ให้ถูกต้องตาม Project Structure ของคุณ)
 // สมมติว่า models อยู่ folder ถัดขึ้นไป 1 ชั้น
-const ClassesSchedule = require("../models/ClassesSchedule"); 
-const ClassesCapacity = require("../models/ClassesCapacity"); 
-const ClassesBookingInAdvance = require("../models/ClassesBookingInAdvance");
+const { 
+  ClassesSchedule, 
+  ClassesCapacity, 
+  ClassesBookingInAdvance 
+} = require("../models/Associations");
 
 /**
  * Advanced Schedule Job
