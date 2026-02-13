@@ -160,7 +160,7 @@ const sendEmailBookingConfirmation = async (
     .replace("{{class_type}}", is_private ? "Private Class" : "Group Class")
     .replace(
       "{{date_human}}",
-      new Date(date_booking).toLocaleDateString("en-EN", {
+      new Date(date_booking).toLocaleDateString("en-US", {
         year: "numeric",
         month: "long",
         day: "numeric",
@@ -334,21 +334,18 @@ const createBooking = async (bookingData, performedByUser = null) => {
   } finally {
     // ✅ ส่งเมลเฉพาะตอนสร้างสำเร็จเท่านั้น
     if (newBooking) {
-      try {
-        await sendEmailBookingConfirmation(
-          client_email,
-          client_name,
-          is_private,
-          date_booking,
-          newBooking,
-          classes_schedule_id,
-          "N",
-          capacity
-        );
-      } catch (mailErr) {
+      sendEmailBookingConfirmation(
+        client_email,
+        client_name,
+        is_private,
+        date_booking,
+        newBooking,
+        classes_schedule_id,
+        "N",
+        capacity
+      ).catch((mailErr) => {
         console.error("📧 Email send failed:", mailErr);
-        // ❗ ไม่ throw เพราะไม่ควรทับ error หลัก
-      }
+      });
     }
   }
 };
@@ -404,15 +401,18 @@ const updateBooking = async (bookingId, updateData, performedByUser = null) => {
     }
 
     // 2. ถ้ามีการเปลี่ยน capacity หรือ date → ต้องเช็คที่นั่งใหม่
+    const isSameSlot =
+      dayjs(date_booking).isSame(dayjs(booking.date_booking), "day") &&
+      classes_schedule_id === booking.classes_schedule_id;
+
     if (
       capacity !== booking.capacity ||
-      date_booking !== booking.date_booking ||
-      classes_schedule_id !== booking.classes_schedule_id
+      !isSameSlot
     ) {
       await _checkAvailability(
         classes_schedule_id,
         transaction,
-        booking.capacity,
+        isSameSlot ? booking.capacity : 0,
         capacity,
         date_booking,
         null,
@@ -487,20 +487,18 @@ const updateBooking = async (bookingId, updateData, performedByUser = null) => {
   } finally {
     // ✅ ส่งเมลเฉพาะตอน UPDATE สำเร็จเท่านั้น
     if (updatedBooking) {
-      try {
-        await sendEmailBookingConfirmation(
-          updatedBooking.client_email,
-          updatedBooking.client_name,
-          updatedBooking.is_private,
-          updatedBooking.date_booking,
-          updatedBooking,
-          updatedBooking.classes_schedule_id,
-          "Y",
-          capacity // ✅ FLAG RESCHEDULE
-        );
-      } catch (mailErr) {
+      sendEmailBookingConfirmation(
+        updatedBooking.client_email,
+        updatedBooking.client_name,
+        updatedBooking.is_private,
+        updatedBooking.date_booking,
+        updatedBooking,
+        updatedBooking.classes_schedule_id,
+        "Y",
+        capacity // ✅ FLAG RESCHEDULE
+      ).catch((mailErr) => {
         console.error("📧 Email send failed:", mailErr);
-      }
+      });
     }
   }
 };
@@ -659,19 +657,17 @@ const updateBookingStatus = async (bookingId, newStatus, user) => {
   } finally {
     // ✅ ส่งเมลเฉพาะตอน UPDATE สถานะสำเร็จจริง ๆ
     if (updatedBooking && newStatus === "CANCELED") {
-      try {
-        await sendEmailBookingConfirmation(
-          updatedBooking.client_email,
-          updatedBooking.client_name,
-          updatedBooking.is_private,
-          updatedBooking.date_booking,
-          updatedBooking,
-          updatedBooking.classes_schedule_id,
-          "C" // ✅ FLAG CANCEL
-        );
-      } catch (mailErr) {
+      sendEmailBookingConfirmation(
+        updatedBooking.client_email,
+        updatedBooking.client_name,
+        updatedBooking.is_private,
+        updatedBooking.date_booking,
+        updatedBooking,
+        updatedBooking.classes_schedule_id,
+        "C" // ✅ FLAG CANCEL
+      ).catch((mailErr) => {
         console.error("📧 Email send failed:", mailErr);
-      }
+      });
     }
   }
 };
