@@ -11,6 +11,3 @@ config.js
 
 .DS_Store
 Thumbs.db
-debug_availability.js
-scripts/check_columns.js
-scripts/reproduce_move_issue.js

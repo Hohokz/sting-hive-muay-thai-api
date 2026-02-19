@@ -281,9 +281,6 @@ const createBooking = async (bookingData, performedByUser = null) => {
       throw error;
     }
 
-    // ✅ Ensure is_private matches the actual schedule type
-    const finalIsPrivate = schedule.is_private_class;
-
     console.log("performerName", performedByUser);
 
     // 3. Create booking
@@ -295,13 +292,14 @@ const createBooking = async (bookingData, performedByUser = null) => {
         client_phone,
         booking_status: "SUCCEED",
         capacity,
-        is_private: finalIsPrivate,
+        is_private: is_private || false,
         date_booking: normalizedBookingDate,
         created_by: performedByUser?.name || performedByUser?.username || client_name || "CLIENT_APP",
         gyms_id: schedule.gyms_id,
-        gyms_enum: schedule.gym.gym_enum, // Fixed from schedule.gym_enum to be consistent with associations if needed, or kept if it works
+        gyms_enum: schedule.gym_enum,
         trainer: trainer || "",
-        multipleStudents: multiple_students || false, 
+        trainer: trainer || "",
+        multipleStudents: multiple_students || false, // ✅ Use snake_case if camelCase is missing
       },
       { transaction }
     );
@@ -428,19 +426,6 @@ const updateBooking = async (bookingId, updateData, performedByUser = null) => {
       error.status = 404;
       throw error;
     }
-
-    // ✅ [VALIDATION] Ensure provided gym matches the schedule's gym
-    if (updateData.gym_enum && updateData.gym_enum !== schedule.gym_enum) {
-      const error = new Error(
-        `Branch mismatch: The selected session belongs to ${schedule.gym_enum}, but you specified ${updateData.gym_enum}.`
-      );
-      error.status = 400;
-      throw error;
-    }
-
-    // ✅ Ensure is_private matches the actual schedule type on update
-    const finalIsPrivate = schedule.is_private_class;
-
     // 3. Preserve old values for logging
     const oldValues = {
       classes_schedule_id: booking.classes_schedule_id,
@@ -456,14 +441,17 @@ const updateBooking = async (bookingId, updateData, performedByUser = null) => {
         client_email,
         client_phone,
         capacity,
-        is_private: finalIsPrivate,
+        is_private,
         date_booking: normalizedBookingDate,
         gyms_id: schedule.gyms_id,
         gyms_enum: schedule.gym_enum,
-        trainer: trainer || "",
+        trainer,
+        trainer,
         multipleStudents: multiple_students || false,
         updated_by: performedByUser?.name || performedByUser?.username || client_name || "CLIENT_APP",
+
         updated_date: new Date(),
+
       },
       { transaction }
     );
