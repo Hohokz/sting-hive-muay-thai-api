@@ -715,7 +715,7 @@ const getAdvancedSchedules = async (filters = {}) => {
         time_slot: item.schedule
           ? `${item.schedule.start_time} - ${item.schedule.end_time}`
           : "Unknown",
-        original_capacity: null, // ไม่มีเก็บไว้แล้ว
+        original_capacity: item.old_capasity, // ไม่มีเก็บไว้แล้ว
         new_capacity: item.capacity,
         start_date: item.start_date,
         end_date: item.end_date,
