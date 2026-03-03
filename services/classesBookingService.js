@@ -227,11 +227,12 @@ const createBooking = async (bookingData, performedByUser = null) => {
     throw error;
   }
 
-  // ✅ [PAST DATE VALIDATION] Move to the top for efficiency
+  // ✅ [PAST DATE VALIDATION] Allow admins to bypass
+  const isAdmin = performedByUser?.role === "ADMIN";
   const today = dayjs().startOf("day");
   const bookingDateObj = dayjs(date_booking).startOf("day").hour(7);
 
-  if (bookingDateObj.isBefore(today)) {
+  if (!isAdmin && bookingDateObj.isBefore(today)) {
     const error = new Error("Cannot book for a past date.");
     error.status = 400;
     throw error;
@@ -374,11 +375,12 @@ const updateBooking = async (bookingId, updateData, performedByUser = null) => {
     throw error;
   }
 
-  // ✅ [PAST DATE VALIDATION] Move to the top
+  // ✅ [PAST DATE VALIDATION] Allow admins to bypass
+  const isAdmin = performedByUser?.role === "ADMIN";
   const today = dayjs().startOf("day");
   const bookingDateObj = dayjs(date_booking).startOf("day").hour(7);
 
-  if (bookingDateObj.isBefore(today)) {
+  if (!isAdmin && bookingDateObj.isBefore(today)) {
     const error = new Error("Cannot book for a past date.");
     error.status = 400;
     throw error;
