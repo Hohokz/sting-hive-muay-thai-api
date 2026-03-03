@@ -334,11 +334,16 @@ const getAvailableSchedulesByBookingDate = async (
   isPrivateClass
 ) => {
   try {
-    console.log("--------------- GET AVAILABLE SCHEDULES (SHARED LOGIC) ---------------");
+    console.log("--------------- GET AVAILABLE SCHEDULES (OPTIMIZED) ---------------");
     console.log("Input Date:", date);
     console.log("GymEnum:", gymEnum);
 
-    // 1. Fetch Base Schedules
+    const targetDate = dayjs(date);
+    const checkTime = targetDate.startOf("day").hour(7).toDate();
+    const startOfDay = targetDate.startOf("day").toDate();
+    const endOfDay = targetDate.endOf("day").toDate();
+
+    // 1. Fetch Base Schedules with Capacity
     const whereSchedule = {};
     if (gymEnum) {
       whereSchedule.gym_enum = gymEnum;
@@ -349,55 +354,116 @@ const getAvailableSchedulesByBookingDate = async (
 
     const schedules = await ClassesSchedule.findAll({
       where: whereSchedule,
+      include: [{ model: ClassesCapacity, as: "capacity_data" }],
       order: [["start_time", "ASC"]],
     });
 
     console.log(`Found ${schedules.length} base schedules.`);
+    if (schedules.length === 0) return [];
 
-    // 2. Iterate and Calculate Availability using Shared Function
-    const availableSchedules = [];
+    const scheduleIds = schedules.map((s) => s.id);
+    const gymIds = [...new Set(schedules.map((s) => s.gyms_id))];
 
-    for (const schedule of schedules) {
-      // Call Shared Logic
-      // Note: This is N+1 query pattern, but given low N (classes per day), it's acceptable for consistency.
-      const availability = await getScheduleRealtimeAvailability(schedule.id, date);
-
-      // If Gym/Class is closed, we might still want to show it as "Closed" or filter it out.
-      // Based on previous logic, we skip if closed by gym-wide rule.
-
-      if (availability.isCloseGym) {
-          console.log(`[Skip] Gym Closed for Schedule ${schedule.id}`);
-          continue; 
-      }
-
-      availableSchedules.push({
-        id: schedule.id,
-        start_time: schedule.start_time,
-        end_time: schedule.end_time,
-        gym_enum: schedule.gym_enum,
-        gyms_id: schedule.gyms_id,
-        capacity_data: {
-          id: schedule.capacity_data?.id, // Note: might need to fetch if not included in shared
-          capacity: availability.maxCapacity,
+    // 2. Fetch Bulk Data: Gym Closures, Advanced Configs, and Booking Counts
+    const [gymClosures, advancedConfigs, bookingCounts] = await Promise.all([
+      // A. Gym Closures
+      ClassesBookingInAdvance.findAll({
+        where: {
+          gyms_id: { [Op.in]: gymIds },
+          is_close_gym: true,
+          classes_schedule_id: null,
+          start_date: { [Op.lte]: checkTime },
+          end_date: { [Op.gte]: checkTime },
         },
-        booking_count: availability.currentBookingCount,
-        available_seats: availability.availableSeats,
-        is_full: availability.availableSeats <= 0,
-      });
+      }),
+      // B. Advanced Configs for these schedules
+      ClassesBookingInAdvance.findAll({
+        where: {
+          classes_schedule_id: { [Op.in]: scheduleIds },
+          start_date: { [Op.lte]: checkTime },
+          end_date: { [Op.gte]: checkTime },
+        },
+        order: [["created_date", "DESC"]],
+      }),
+      // C. Grouped Booking Counts
+      ClassesBooking.findAll({
+        attributes: [
+          "classes_schedule_id",
+          [Sequelize.fn("SUM", Sequelize.col("capacity")), "total_capacity"],
+        ],
+        where: {
+          classes_schedule_id: { [Op.in]: scheduleIds },
+          date_booking: { [Op.between]: [startOfDay, endOfDay] },
+          booking_status: { [Op.notIn]: ["CANCELED", "FAILED"] },
+        },
+        group: ["classes_schedule_id"],
+      }),
+    ]);
 
-      console.log(
-        `[${schedule.gym_enum} ${schedule.start_time}-${schedule.end_time} (${
-          schedule.is_private_class ? "Private" : "Group"
-        })] ID: ${schedule.id} | Max: ${availability.maxCapacity} | Booked: ${
-          availability.currentBookingCount
-        } | Avail: ${availability.availableSeats}`
-      );
-    }
+    // 3. Map Bulk Data for quick lookup
+    const gymClosureMap = new Map(gymClosures.map((c) => [c.gyms_id, c]));
+    
+    // For advanced configs, since we might have multiple, we take the latest (due to order DESC)
+    const advancedConfigMap = new Map();
+    advancedConfigs.forEach(config => {
+      if (!advancedConfigMap.has(config.classes_schedule_id)) {
+        advancedConfigMap.set(config.classes_schedule_id, config);
+      }
+    });
 
+    const bookingCountMap = new Map(
+      bookingCounts.map((b) => [
+        b.classes_schedule_id,
+        parseInt(b.get("total_capacity") || 0, 10),
+      ])
+    );
+
+    // 4. Assemble Results
+    const availableSchedules = schedules
+      .filter((schedule) => !gymClosureMap.has(schedule.gyms_id))
+      .map((schedule) => {
+        const advConfig = advancedConfigMap.get(schedule.id);
+        const currentBookingCount = bookingCountMap.get(schedule.id) || 0;
+        
+        let maxCapacity = 0;
+        let isClassClosed = false;
+
+        if (advConfig) {
+          if (advConfig.is_close_gym) {
+            isClassClosed = true;
+            maxCapacity = 0;
+          } else {
+            maxCapacity = advConfig.capacity;
+          }
+        } else {
+          maxCapacity = schedule.capacity_data?.capacity || 0;
+        }
+
+        const availableSeats = Math.max(0, maxCapacity - currentBookingCount);
+
+        return {
+          id: schedule.id,
+          start_time: schedule.start_time,
+          end_time: schedule.end_time,
+          gym_enum: schedule.gym_enum,
+          gyms_id: schedule.gyms_id,
+          capacity_data: {
+            id: schedule.capacity_data?.id,
+            capacity: maxCapacity,
+          },
+          booking_count: currentBookingCount,
+          available_seats: availableSeats,
+          is_full: availableSeats <= 0,
+          is_class_closed: isClassClosed,
+        };
+      })
+      .filter((s) => !s.is_class_closed);
+
+    console.log(`Returning ${availableSchedules.length} available schedules.`);
     return availableSchedules;
   } catch (error) {
     console.error(
-      "[SUPABASE DB ERROR] getAvailableSchedulesByBookingDate:",
+      "[OPTIMIZED DB ERROR] getAvailableSchedulesByBookingDate:",
       error
     );
     throw error;
