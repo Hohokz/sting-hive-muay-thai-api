@@ -1,5 +1,5 @@
 const cron = require("node-cron");
-const { Op, Sequelize } = require("sequelize");
+const { Op } = require("sequelize");
 const { google } = require("googleapis");
 const {
   ClassesBooking,
@@ -9,53 +9,40 @@ const {
 } = require("../models/Associations");
 
 /**
- * Monthly Archival Job
- * - Runs on the 1st of every month at 01:00 AM
- * - Exports previous month's bookings to Google Sheets
- * - Deletes old ClassesBookingInAdvance records
+ * [CRON JOB] ระบบจัดการข้อมูลประจำเดือน
+ * - ทำงานทุกวันที่ 1 ของเดือน เวลา 01:00 น.
+ * - ส่งออกข้อมูลการจองของเดือนที่แล้วไปยัง Google Sheets เพื่อสำรองข้อมูล
+ * - ล้างข้อมูลการตั้งค่าล่วงหน้าที่เก่าเกินไปออกเพื่อประหยัดพื้นที่
  */
 const startMonthlyArchivalJob = () => {
-  // 0 1 1 * * = At 01:00 on day-of-month 1.
   cron.schedule("0 1 1 * *", async () => {
+    console.log("[ArchivalJob] ⏰ เริ่มงานสำรองข้อมูลประจำเดือน...");
     await runMonthlyArchivalJob();
   });
 };
 
 const runMonthlyArchivalJob = async () => {
-  console.log("===========================================");
-  console.log("[Monthly Archival Job] STARTING...");
-  console.log("===========================================");
-
   try {
-    // 1. Calculate Date Range (Previous Month)
+    // 1. คำนวณช่วงเวลา (เดือนที่แล้ว)
     const now = new Date();
-    // Start of CURRENT month
     const startOfCurrentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    // Start of PREVIOUS month
-    const startOfPreviousMonth = new Date(
-      now.getFullYear(),
-      now.getMonth() - 1,
-      1
-    );
-    // End of PREVIOUS month (Last ms before start of current month)
+    const startOfPreviousMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const endOfPreviousMonth = new Date(startOfCurrentMonth.getTime() - 1);
 
-    const prevMonthName = startOfPreviousMonth.toLocaleString("default", {
+    const prevMonthLabel = startOfPreviousMonth.toLocaleString("default", {
       month: "short",
       year: "numeric",
     });
-    console.log(`[Job] Processing Month: ${prevMonthName}`);
-    console.log(
-      `      Range: ${startOfPreviousMonth.toISOString()} to ${endOfPreviousMonth.toISOString()}`
-    );
 
-    // 2. Fetch Bookings
+    console.log(`[ArchivalJob] 📅 กำลังจัดการข้อมูลเดือน: ${prevMonthLabel}`);
+
+    // 2. ดึงข้อมูลการจองที่สำเร็จแล้วของเดือนที่แล้ว
     const bookings = await ClassesBooking.findAll({
       where: {
         date_booking: {
           [Op.between]: [startOfPreviousMonth, endOfPreviousMonth],
         },
-        booking_status: "SUCCEED", // Only export successful bookings? Or all? Usually SUCCEED.
+        booking_status: "SUCCEED",
       },
       include: [
         {
@@ -63,44 +50,27 @@ const runMonthlyArchivalJob = async () => {
           as: "schedule",
           attributes: ["start_time", "end_time", "gym_enum"],
         },
-        // If User model is linked, include it here.
-        // Based on Associations.js, User-Booking link is commented out or implicit via client_name/email fields in Booking
         {
           model: Gyms,
           as: "gyms",
           attributes: ["gym_name"],
         },
       ],
-      order: [
-        ["date_booking", "ASC"],
-        ["id", "ASC"],
-      ],
+      order: [["date_booking", "ASC"], ["id", "ASC"]],
     });
 
-    console.log(`[Job] Found ${bookings.length} succeessful bookings.`);
+    console.log(`[ArchivalJob] 🔍 พบรายการจองที่ต้องสำรอง: ${bookings.length} รายการ`);
 
     if (bookings.length > 0) {
-      // 3. Export to Google Sheets
-      await exportToGoogleSheets(bookings, prevMonthName);
-    } else {
-      console.log("[Job] No bookings to export.");
+      // 3. ส่งออกไปยัง Google Sheets
+      await exportToGoogleSheets(bookings, prevMonthLabel);
     }
 
-    // 4. Cleanup Advance Configs (Old records)
-    // Delete records where end_date < Start of PREVIOUS month (Keep last month's history? Or delete older?)
-    // User request: "delete record out in schedule in advance"
-    // Usually we keep history for audit, but let's delete anything older than Start of Current Month
+    // 4. ล้างข้อมูล Advance Configs ที่เก่าเกินไป
+    // (ลบข้อมูลที่สิ้นสุดก่อนวันที่เริ่มเดือนที่แล้ว - เก็บไว้ประมาณ 1-2 เดือน)
+    const cleanupDate = startOfPreviousMonth;
 
-    // Safety check: Delete configs ended before the START of the PREVIOUS month?
-    // Or just clean up EVERYTHING older than TODAY/Current Month?
-    // Let's safe side: Delete configs that ended before the start of the previous month.
-    // (So we always keep ~1-2 months of history/active configs).
-
-    const cleanupDate = startOfPreviousMonth; // Delete anything ended before previous month started
-
-    console.log(
-      `[Job] Cleaning up Advance Configs ended before ${cleanupDate.toISOString()}...`
-    );
+    console.log(`[ArchivalJob] 🧹 กำลังลบ Config เก่าที่สิ้นสุดก่อน ${cleanupDate.toDateString()}...`);
 
     const deletedCount = await ClassesBookingInAdvance.destroy({
       where: {
@@ -108,38 +78,29 @@ const runMonthlyArchivalJob = async () => {
       },
     });
 
-    console.log(`[Job] Cleanup complete. Deleted ${deletedCount} records.`);
+    console.log(`[ArchivalJob] ✅ ลบเรียบร้อย: ${deletedCount} รายการ`);
+    console.log("[ArchivalJob] 🏁 เสร็จสิ้นภารกิจประจำเดือน\n");
 
-    console.log("===========================================");
-    console.log("[Monthly Archival Job] COMPLETED");
-    console.log("===========================================\n");
   } catch (error) {
-    console.error("[Job Error]:", error);
+    console.error("[ArchivalJob] ❌ เกิดข้อผิดพลาด:", error);
   }
 };
 
+/**
+ * ฟังก์ชันส่งออกข้อมูลไปยัง Google Sheets
+ */
 const exportToGoogleSheets = async (bookings, sheetTitle) => {
-  // Credentials from ENV
   const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-  // Handle private key newlines
-  const privateKey = process.env.GOOGLE_PRIVATE_KEY
-    ? process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, "\n")
-    : undefined;
-  // Destination Folder ID (Optional, defaults to root)
+  const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n");
   const folderId = process.env.GOOGLE_ARCHIVE_FOLDER_ID;
 
   if (!clientEmail || !privateKey) {
-    console.error(
-      "❌ [Google Auth] Missing GOOGLE_SERVICE_ACCOUNT_EMAIL or GOOGLE_PRIVATE_KEY"
-    );
+    console.error("[GoogleExport] ❌ ขาด GOOGLE_SERVICE_ACCOUNT_EMAIL หรือ GOOGLE_PRIVATE_KEY");
     return;
   }
 
   const auth = new google.auth.GoogleAuth({
-    credentials: {
-      client_email: clientEmail,
-      private_key: privateKey,
-    },
+    credentials: { client_email: clientEmail, private_key: privateKey },
     scopes: [
       "https://www.googleapis.com/auth/spreadsheets",
       "https://www.googleapis.com/auth/drive.file",
@@ -150,17 +111,10 @@ const exportToGoogleSheets = async (bookings, sheetTitle) => {
   const drive = google.drive({ version: "v3", auth });
 
   try {
-    // A. Create New Spreadsheet
+    // A. สร้าง Spreadsheet ใหม่
     const resource = {
-      properties: {
-        title: `StingHive Bookings - ${sheetTitle}`,
-      },
-      // If folderId is provided, we can move it later or specify parents if using Drive API create
+      properties: { title: `StingHive Bookings - ${sheetTitle}` },
     };
-
-    // Note: sheets.spreadsheets.create doesn't support 'parents' directly.
-    // We create it, then move it, OR use Drive API to create metadata first.
-    // Simpler: Create Sheet -> Get ID -> Move using Drive API.
 
     const spreadsheet = await sheets.spreadsheets.create({
       resource,
@@ -168,63 +122,36 @@ const exportToGoogleSheets = async (bookings, sheetTitle) => {
     });
 
     const spreadsheetId = spreadsheet.data.spreadsheetId;
-    console.log(
-      `[Google] Created Spreadsheet: ${spreadsheet.data.spreadsheetUrl}`
-    );
+    console.log(`[GoogleExport] 📄 สร้างไฟล์สำเร็จ: ${spreadsheet.data.spreadsheetUrl}`);
 
-    // B. Move to Folder (Optional)
+    // B. ย้ายไฟล์เข้า Folder (ถ้ากำหนดไว้)
     if (folderId) {
-      // Find existing parents (usually 'root') to remove
-      // Actually, just adding the new parent is enough for Drive API v3
-      // But 'addParents' is the way.
-      // Wait, 'create' puts it in root.
       await drive.files.update({
         fileId: spreadsheetId,
         addParents: folderId,
         fields: "id, parents",
       });
-      console.log(`[Google] Moved to Folder ID: ${folderId}`);
+      console.log(`[GoogleExport] 📁 ย้ายเข้า Folder ID: ${folderId}`);
     }
 
-    // C. Prepare Data
+    // C. เตรียมข้อมูล (Headers & Rows)
     const headerRow = [
-      "Booking ID",
-      "Booking Date",
-      "Time Slot",
-      "Class Type",
-      "Gym",
-      "Client Name",
-      "Email",
-      "Phone",
-      "Capacity",
-      "Status",
+      "ID", "วันที่จอง", "ช่วงเวลา", "ประเภท", "สาขา", "ชื่อลูกค้า", "อีเมล", "เบอร์โทร", "จำนวน", "สถานะ"
     ];
 
     const rows = bookings.map((b) => {
       const dateStr = b.date_booking.toISOString().split("T")[0];
-      const timeSlot = b.schedule
-        ? `${b.schedule.start_time} - ${b.schedule.end_time}`
-        : "Unknown";
-      const classType = b.is_private ? "Private" : "Group";
-      const gymName = b.gyms ? b.gyms.gym_name : "Unknown";
-
+      const timeSlot = b.schedule ? `${b.schedule.start_time} - ${b.schedule.end_time}` : "-";
       return [
-        b.id,
-        dateStr,
-        timeSlot,
-        classType,
-        gymName,
-        b.client_name,
-        b.client_email,
-        b.client_phone || "",
-        b.capacity,
-        b.booking_status,
+        b.id, dateStr, timeSlot, b.is_private ? "Private" : "Group",
+        b.gyms?.gym_name || "-", b.client_name, b.client_email,
+        b.client_phone || "-", b.capacity, b.booking_status,
       ];
     });
 
     const values = [headerRow, ...rows];
 
-    // D. Write Data
+    // D. บันทึกข้อมูลลงใน Sheet
     await sheets.spreadsheets.values.update({
       spreadsheetId,
       range: "Sheet1!A1",
@@ -232,9 +159,9 @@ const exportToGoogleSheets = async (bookings, sheetTitle) => {
       resource: { values },
     });
 
-    console.log(`[Google] Successfully exported ${rows.length} rows.`);
+    console.log(`[GoogleExport] ✅ เขียนข้อมูลลงไฟล์สำเร็จ ${rows.length} แถว`);
   } catch (err) {
-    console.error("[Google Export Error]", err);
+    console.error("[GoogleExport] ❌ Error:", err);
   }
 };
 

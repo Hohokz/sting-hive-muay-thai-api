@@ -2,7 +2,7 @@ const User = require("../models/User");
 const bcrypt = require("bcryptjs");
 
 /**
- * Get all users (excluding password field)
+ * [READ] ดึงรายชื่อผู้ใช้ทั้งหมด (ไม่รวมรหัสผ่าน)
  */
 exports.getAllUsers = async () => {
   try {
@@ -12,10 +12,14 @@ exports.getAllUsers = async () => {
     });
     return users;
   } catch (error) {
-    throw new Error(`Error fetching users: ${error.message}`);
+    console.error("[UserService] getAllUsers Error:", error);
+    throw new Error(`ไม่สามารถดึงข้อมูลผู้ใช้ได้: ${error.message}`);
   }
 };
 
+/**
+ * [READ] ดึงรายชื่อเฉพาะผู้ใช้ทั่วไป (Role: USER)
+ */
 exports.getAllJustUsers = async () => {
   try {
     const users = await User.findAll({
@@ -25,12 +29,13 @@ exports.getAllJustUsers = async () => {
     });
     return users;
   } catch (error) {
-    throw new Error(`Error fetching users: ${error.message}`);
+    console.error("[UserService] getAllJustUsers Error:", error);
+    throw new Error(`ไม่สามารถดึงข้อมูลรายชื่อเทรนเนอร์/สมาชิกได้: ${error.message}`);
   }
 };
 
 /**
- * Get user by ID (excluding password field)
+ * [READ] ดึงข้อมูลผู้ใช้ตาม ID
  */
 exports.getUserById = async (id) => {
   try {
@@ -39,7 +44,9 @@ exports.getUserById = async (id) => {
     });
 
     if (!user) {
-      throw new Error("User not found");
+      const error = new Error("ไม่พบข้อมูลผู้ใช้");
+      error.status = 404;
+      throw error;
     }
 
     return user;
@@ -49,30 +56,30 @@ exports.getUserById = async (id) => {
 };
 
 /**
- * Create new user
+ * [CREATE] สร้างผู้ใช้ใหม่
  */
 exports.createUser = async (userData, createdBy) => {
   try {
     const { username, password, name, email, phone, role } = userData;
 
-    // Check if username already exists
+    // 1. ตรวจสอบ Username ซ้ำ
     const existingUser = await User.findOne({ where: { username } });
     if (existingUser) {
-      throw new Error("Username already exists");
+      throw new Error("Username นี้ถูกใช้งานไปแล้ว");
     }
 
-    // Check if email already exists (if provided)
+    // 2. ตรวจสอบ Email ซ้ำ
     if (email) {
       const existingEmail = await User.findOne({ where: { email } });
       if (existingEmail) {
-        throw new Error("Email already exists");
+        throw new Error("Email นี้ถูกใช้งานไปแล้ว");
       }
     }
 
-    // Hash password
+    // 3. แฮชรหัสผ่าน
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Create user
+    // 4. บันทึกข้อมูล
     const newUser = await User.create({
       username,
       password: hashedPassword,
@@ -85,7 +92,6 @@ exports.createUser = async (userData, createdBy) => {
       updated_by: createdBy,
     });
 
-    // Return user without password
     const userResponse = newUser.toJSON();
     delete userResponse.password;
 
@@ -96,36 +102,36 @@ exports.createUser = async (userData, createdBy) => {
 };
 
 /**
- * Update user
+ * [UPDATE] อัปเดตข้อมูลผู้ใช้
  */
 exports.updateUser = async (id, userData, updatedBy) => {
   try {
     const user = await User.findByPk(id);
-
     if (!user) {
-      throw new Error("User not found");
+      const error = new Error("ไม่พบข้อมูลผู้ใช้");
+      error.status = 404;
+      throw error;
     }
 
-    const { username, password, name, email, phone, role, is_active } =
-      userData;
+    const { username, password, name, email, phone, role, is_active } = userData;
 
-    // Check if username is being changed and if it already exists
+    // 1. ตรวจสอบการเปลี่ยน Username
     if (username && username !== user.username) {
       const existingUser = await User.findOne({ where: { username } });
       if (existingUser) {
-        throw new Error("Username already exists");
+        throw new Error("Username นี้ถูกใช้งานไปแล้ว");
       }
     }
 
-    // Check if email is being changed and if it already exists
+    // 2. ตรวจสอบการเปลี่ยน Email
     if (email && email !== user.email) {
       const existingEmail = await User.findOne({ where: { email } });
       if (existingEmail) {
-        throw new Error("Email already exists");
+        throw new Error("Email นี้ถูกใช้งานไปแล้ว");
       }
     }
 
-    // Prepare update data
+    // 3. เตรียมข้อมูลอัปเดต
     const updateData = {
       updated_by: updatedBy,
       updated_date: new Date(),
@@ -138,15 +144,13 @@ exports.updateUser = async (id, userData, updatedBy) => {
     if (role) updateData.role = role;
     if (is_active !== undefined) updateData.is_active = is_active;
 
-    // Hash password if provided
     if (password) {
       updateData.password = await bcrypt.hash(password, 10);
     }
 
-    // Update user
+    // 4. บันทึก
     await user.update(updateData);
 
-    // Return updated user without password
     const userResponse = user.toJSON();
     delete userResponse.password;
 
@@ -157,20 +161,19 @@ exports.updateUser = async (id, userData, updatedBy) => {
 };
 
 /**
- * Delete user (soft delete by setting is_active to false)
+ * [DELETE] ลบผู้ใช้ (Hard Delete)
  */
-exports.deleteUser = async (id, deletedBy) => {
+exports.deleteUser = async (id) => {
   try {
     const user = await User.findByPk(id);
-
     if (!user) {
-      throw new Error("User not found");
+      const error = new Error("ไม่พบข้อมูลผู้ใช้");
+      error.status = 404;
+      throw error;
     }
 
-    // Hard delete (permanent deletion)
     await user.destroy();
-
-    return { message: "User deleted successfully" };
+    return { message: "ลบผู้ใช้สำเร็จแล้ว" };
   } catch (error) {
     throw error;
   }

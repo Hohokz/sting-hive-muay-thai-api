@@ -1,186 +1,172 @@
-// controllers/classesBookingController.js
-const bookingService = require("../services/classesBookingService");
+const classesBookingService = require("../services/classesBookingService");
 
-const handleServiceError = (res, error) => {
-  const statusCode = error.status || 500;
-  const message = statusCode === 500 ? "Internal Server Error" : error.message;
-  return res.status(statusCode).json({ success: false, message });
-};
-
-// [POST] Create Booking
-const createBooking = async (req, res) => {
-  // Validation
-  console.log("---------------- [POST] Create Booking DEBUG ----------------");
-  console.log("Request Body:", JSON.stringify(req.body, null, 2));
-
-  const { classes_schedule_id, client_name, client_email } = req.body;
-  if (!classes_schedule_id || !client_name || !client_email) {
-    console.error("❌ Missing required fields:", { classes_schedule_id, client_name, client_email });
-    return res
-      .status(400)
-      .json({
-        success: false,
-        message: "Missing required fields: schedule_id, name, and email.",
-      });
-  }
-
+/**
+ * [POST] สร้างรายการจองคลาสเรียน
+ */
+exports.createBooking = async (req, res) => {
   try {
-    const booking = await bookingService.createBooking(req.body, req.user);
+    const performedByUser = req.user;
+    const result = await classesBookingService.createBooking(req.body, performedByUser);
 
     res.status(201).json({
       success: true,
-      message: "Booking created successfully.",
-      data: booking,
+      message: "สร้างการจองสำเร็จแล้ว",
+      data: result.data,
     });
   } catch (error) {
-    console.error("❌ Error in createBooking Controller:", error.message);
-    if (error.status === 400) {
-        console.error("Validation Error Details:", error);
-    }
-    handleServiceError(res, error);
-  }
-};
-
-
-const updateBooking = async (req, res) => {
-  try {
-    const { id } = req.params; // booking id จาก URL
-    const updateData = req.body; // ข้อมูลที่ต้องการแก้ไข
-
-    if (!id) {
-      return res.status(400).json({
-        success: false,
-        message: "Booking ID is required.",
-      });
-    }
-
-    const updatedBooking = await bookingService.updateBooking(id, updateData, req.user);
-
-
-    return res.status(200).json({
-      success: true,
-      message: "Booking updated successfully.",
-      data: updatedBooking,
-    });
-  } catch (error) {
-    console.error("[Booking Controller] Update Error:", error);
-
-    return res.status(error.status || 500).json({
+    console.error("[BookingController] createBooking Error:", error);
+    res.status(error.status || 400).json({
       success: false,
-      message: error.message || "Failed to update booking.",
+      message: error.message || "ไม่สามารถสร้างการจองได้",
     });
   }
 };
 
-// [GET] List Bookings
-const getBookings = async (req, res) => {
+/**
+ * [PUT] อัปเดตข้อมูลการจอง (เช่น เปลี่ยนเวลา หรือจำนวนคน)
+ */
+exports.updateBooking = async (req, res) => {
   try {
-    const bookings = await bookingService.getBookings(req.query);
-    res
-      .status(200)
-      .json({ success: true, count: bookings.length, data: bookings });
+    const { id } = req.params;
+    const performedByUser = req.user;
+    const result = await classesBookingService.updateBooking(id, req.body, performedByUser);
+
+    res.status(200).json({
+      success: true,
+      message: "อัปเดตการจองสำเร็จแล้ว",
+      data: result.data,
+    });
   } catch (error) {
-    handleServiceError(res, error);
+    console.error("[BookingController] updateBooking Error:", error);
+    res.status(error.status || 400).json({
+      success: false,
+      message: error.message || "ไม่สามารถอัปเดตการจองได้",
+    });
   }
 };
 
-// [PATCH] Cancel Booking (Shortcut endpoint)
-const cancelBooking = async (req, res) => {
-  const { id } = req.params;
+/**
+ * [PATCH] อัปเดตสถานะการจอง (เช่น CANCEL, SUCCEED)
+ */
+exports.updateBookingStatus = async (req, res) => {
   try {
-    const result = await bookingService.updateBookingStatus(
-      id,
-      "CANCELED",
-      req.user
-    );
+    const { id } = req.params;
+    const { booking_status } = req.body;
+    const performedByUser = req.user;
 
-    res
-      .status(200)
-      .json({ success: true, message: "Booking canceled.", data: result });
+    const result = await classesBookingService.updateBookingStatus(id, booking_status, performedByUser);
+
+    res.status(200).json({
+      success: true,
+      message: "อัปเดตสถานะการจองสำเร็จ",
+      data: result.data,
+    });
   } catch (error) {
-    handleServiceError(res, error);
+    console.error("[BookingController] updateBookingStatus Error:", error);
+    res.status(error.status || 400).json({
+      success: false,
+      message: error.message || "ไม่สามารถอัปเดตสถานะได้",
+    });
   }
 };
 
-const patchBookingNote = async (req, res) => {
-  const { id } = req.params;
-  const { note } = req.body;
-
+/**
+ * [PATCH] อัปเดตบันทึกเพิ่มเติม (Admin Note)
+ */
+exports.updateBookingNote = async (req, res) => {
   try {
-    const result = await bookingService.updateBookingNote(id, note, req.user);
+    const { id } = req.params;
+    const { note } = req.body;
+    const performedByUser = req.user;
 
-    return res.status(200).json(result);
-  } catch (error) {
-    handleServiceError(res, error);
-  }
-};
+    const result = await classesBookingService.updateBookingNote(id, note, performedByUser);
 
-const updateBookingTrainer = async (req, res) => {
-  const { id } = req.params;
-  const trainerName = req.body.trainer_name;
-
-  try {
-    const result = await bookingService.updateBookingTrainer(id, trainerName, req.user);
-
-
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
       message: result.message,
     });
   } catch (error) {
-    handleServiceError(res, error);
+    console.error("[BookingController] updateBookingNote Error:", error);
+    res.status(error.status || 400).json({
+      success: false,
+      message: error.message,
+    });
   }
 };
 
-const updateBookingPayment = async (req, res) => {
-  const { id } = req.params;
-  const payment_status = req.body.is_paid;
-
+/**
+ * [PATCH] อัปเดตผู้สอน (Trainer)
+ */
+exports.updateBookingTrainer = async (req, res) => {
   try {
-    const result = await bookingService.updateBookingPayment(
-      id,
-      payment_status,
-      req.user
-    );
+    const { id } = req.params;
+    const { trainer } = req.body;
+    const performedByUser = req.user;
 
+    const result = await classesBookingService.updateBookingTrainer(id, trainer, performedByUser);
 
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
       message: result.message,
     });
   } catch (error) {
-    handleServiceError(res, error);
+    console.error("[BookingController] updateBookingTrainer Error:", error);
+    res.status(error.status || 400).json({
+      success: false,
+      message: error.message,
+    });
   }
 };
 
-const getTrainerForRequest = async (req, res) => {
+/**
+ * [PATCH] อัปเดตสถานะการชำระเงิน
+ */
+exports.updateBookingPayment = async (req, res) => {
   try {
-    const trainers = await bookingService.getTrainerForRequest();
-    res
-      .status(200)
-      .json({ success: true, count: trainers.length, data: trainers });
+    const { id } = req.params;
+    const { payment_status } = req.body;
+    const performedByUser = req.user;
+
+    const result = await classesBookingService.updateBookingPayment(id, payment_status, performedByUser);
+
+    res.status(200).json({
+      success: true,
+      message: result.message,
+    });
   } catch (error) {
-    handleServiceError(res, error);
+    console.error("[BookingController] updateBookingPayment Error:", error);
+    res.status(error.status || 400).json({
+      success: false,
+      message: error.message,
+    });
   }
 };
 
-const getBookingByName = async (req, res) => {
+/**
+ * [GET] ดึงข้อมูลการจองทั้งหมด
+ */
+exports.getBookings = async (req, res) => {
   try {
-    const booking = await bookingService.getBookingByName(req.params.name);
-    res.status(200).json({ success: true, data: booking });
+    const bookings = await classesBookingService.getBookings(req.query);
+    res.status(200).json({ success: true, count: bookings.length, data: bookings });
   } catch (error) {
-    handleServiceError(res, error);
+    console.error("[BookingController] getBookings Error:", error);
+    res.status(error.status || 400).json({
+      success: false,
+      message: error.message || "ไม่สามารถดึงข้อมูลการจองได้",
+    });
   }
 };
 
-module.exports = {
-  createBooking,
-  updateBooking,
-  getBookings,
-  cancelBooking,
-  patchBookingNote,
-  updateBookingTrainer,
-  updateBookingPayment,
-  getTrainerForRequest,
-  getBookingByName,
+/**
+ * [GET] ดึงข้อมูลผู้สอนสำหรับคำขอ
+ */
+exports.getTrainerForRequest = async (req, res) => {
+  try {
+    const trainers = await classesBookingService.getTrainerForRequest();
+    res.status(200).json({ success: true, count: trainers.length, data: trainers });
+  } catch (error) {
+    console.error("[BookingController] getTrainerForRequest Error:", error);
+    res.status(500).json({ success: false, message: "เกิดข้อผิดพลาดในการดึงข้อมูลผู้สอน" });
+  }
 };

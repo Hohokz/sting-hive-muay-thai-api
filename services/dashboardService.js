@@ -1,17 +1,21 @@
 const { ClassesBooking, ClassesSchedule } = require("../models/Associations");
-
 const { Op } = require("sequelize");
+const dayjs = require("dayjs");
+const utc = require("dayjs/plugin/utc");
 
+dayjs.extend(utc);
+
+/**
+ * [READ] สรุปข้อมูลหน้า Dashboard รายวัน
+ * @param {Date|string} targetDate 
+ */
 const getDashboardSummary = async (targetDate = new Date()) => {
-  // <--- Default เป็นวันปัจจุบัน
   try {
-    // สร้าง Instance ใหม่เพื่อไม่ให้กระทบกับ Object วันที่ที่ส่งเข้ามา
-    const baseDate = new Date(targetDate);
+    const baseDate = dayjs(targetDate);
+    const startOfDay = baseDate.startOf("day").toDate();
+    const endOfDay = baseDate.endOf("day").toDate();
 
-    const startOfDay = new Date(baseDate.setHours(0, 0, 0, 0));
-    const endOfDay = new Date(baseDate.setHours(23, 59, 59, 999));
-
-    // เงื่อนไขพื้นฐานที่ใช้ซ้ำกัน
+    // เงื่อนไขพื้นฐาน: สถานะสำเร็จ และอยู่ในวันที่กำหนด
     const commonWhere = {
       booking_status: "SUCCEED",
       date_booking: {
@@ -19,17 +23,15 @@ const getDashboardSummary = async (targetDate = new Date()) => {
       },
     };
 
-    // 1. จำนวนจองทั้งหมด
-    const todayBooking = await ClassesBooking.count({
-      where: commonWhere,
-    });
+    // 1. ดึงข้อมูลพื้นฐานและผลรวมแบบขนาน (Parallel Fetch)
+    const [todayCount, totalSum, groupSum, privateSum] = await Promise.all([
+      // จำนวนรายการจองทั้งหมด
+      ClassesBooking.count({ where: commonWhere }),
 
-    // 2. Capacity รวม (ใช้ Promise.all เพื่อ Query พร้อมกัน)
-    const [totalSum, groupSum, privateSum] = await Promise.all([
-      // ทั้งหมด
+      // ยอดรวมจำนวนคนเข้าเรียนทั้งหมด
       ClassesBooking.sum("capacity", { where: commonWhere }),
 
-      // Group Class
+      // ยอดรวมจำนวนคนเข้าเรียนเฉพาะ Group Class
       ClassesBooking.sum("capacity", {
         where: commonWhere,
         include: [
@@ -43,7 +45,7 @@ const getDashboardSummary = async (targetDate = new Date()) => {
         ],
       }),
 
-      // Private Class
+      // ยอดรวมจำนวนคนเข้าเรียนเฉพาะ Private Class
       ClassesBooking.sum("capacity", {
         where: commonWhere,
         include: [
@@ -60,25 +62,23 @@ const getDashboardSummary = async (targetDate = new Date()) => {
 
     return {
       date: startOfDay,
-      todayBooking: todayBooking || 0,
+      todayBooking: todayCount || 0,
       totalCapacityToday: totalSum || 0,
       isNotPrivateCapacity: groupSum || 0,
       isPrivateCapacity: privateSum || 0,
     };
   } catch (error) {
-    console.error("[DASHBOARD ERROR]:", error);
+    console.error("[DashboardService] getDashboardSummary Error:", error);
     throw error;
   }
 };
 
+/**
+ * [READ] ดึงรายการจองทั้งหมดของวันที่เลือก
+ * @param {string} date - รูปแบบ YYYY-MM-DD
+ */
 const getDailyBookingsByDate = async (date) => {
   try {
-    // แปลง YYYY-MM-DD → ช่วงเวลาของวันนั้น
-    const dayjs = require("dayjs");
-    const utc = require("dayjs/plugin/utc");
-
-    dayjs.extend(utc);
-
     const startOfDay = dayjs(date).startOf("day").toDate();
     const endOfDay = dayjs(date).endOf("day").toDate();
 
@@ -98,15 +98,16 @@ const getDailyBookingsByDate = async (date) => {
       order: [["date_booking", "ASC"]],
     });
 
+    // ปรับรูปแบบข้อมูล (Enrichment) ก่อนส่งคืน
     return bookings.map((booking) => {
-      const b = booking.toJSON(); // แปลงเป็น JSON ปกติก่อน
+      const b = booking.toJSON();
       return {
         ...b,
-        schedule_id: b.schedule?.id, // ดึง ID มาแปะไว้ที่ชั้นนอกสุด
+        schedule_id: b.schedule?.id, // แปะ ID ตารางเรียนไว้ชั้นนอกสุดเพื่อง่ายต่อการใช้งาน
       };
     });
   } catch (error) {
-    console.error("[Booking Service] Daily Booking Error:", error);
+    console.error("[DashboardService] getDailyBookingsByDate Error:", error);
     throw error;
   }
 };

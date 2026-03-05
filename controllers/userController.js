@@ -1,8 +1,7 @@
 const userService = require("../services/userService");
 
 /**
- * GET /api/v1/users
- * Get all users
+ * [GET] ดึงรายชื่อผู้ใช้ทั้งหมด
  */
 exports.getUsers = async (req, res) => {
   try {
@@ -12,14 +11,18 @@ exports.getUsers = async (req, res) => {
       data: users,
     });
   } catch (error) {
-    console.error("Get users error:", error);
+    console.error("[UserController] getUsers Error:", error);
     res.status(500).json({
       success: false,
-      message: "Internal server error",
+      message: "ไม่สามารถดึงข้อมูลผู้ใช้ได้",
       error: error.message,
     });
   }
 };
+
+/**
+ * [GET] ดึงรายชื่อเฉพาะผู้ใช้ทั่วไป (เทรนเนอร์/สมาชิก)
+ */
 exports.getAllJustUsers = async (req, res) => {
   try {
     const users = await userService.getAllJustUsers();
@@ -28,18 +31,17 @@ exports.getAllJustUsers = async (req, res) => {
       data: users,
     });
   } catch (error) {
-    console.error("Get users error:", error);
+    console.error("[UserController] getAllJustUsers Error:", error);
     res.status(500).json({
       success: false,
-      message: "Internal server error",
+      message: "ไม่สามารถดึงข้อมูลรายชื่อเทรนเนอร์/สมาชิกได้",
       error: error.message,
     });
   }
 };
 
 /**
- * GET /api/v1/users/:id
- * Get user by ID
+ * [GET] ดึงข้อมูลผู้ใช้รายบุคคลตาม ID
  */
 exports.getUser = async (req, res) => {
   try {
@@ -51,9 +53,9 @@ exports.getUser = async (req, res) => {
       data: user,
     });
   } catch (error) {
-    console.error("Get user error:", error);
+    console.error("[UserController] getUser Error:", error);
 
-    if (error.message === "User not found") {
+    if (error.status === 404) {
       return res.status(404).json({
         success: false,
         message: error.message,
@@ -62,43 +64,38 @@ exports.getUser = async (req, res) => {
 
     res.status(500).json({
       success: false,
-      message: "Internal server error",
-      error: error.message,
+      message: "เกิดข้อผิดพลาดในการดึงข้อมูลผู้ใช้",
     });
   }
 };
 
 /**
- * POST /api/v1/users
- * Create new user
+ * [POST] สร้างผู้ใช้ใหม่
  */
 exports.createUser = async (req, res) => {
   try {
     const { username, password } = req.body;
 
-    // Validation
     if (!username || !password) {
       return res.status(400).json({
         success: false,
-        message: "Username and password are required",
+        message: "กรุณาระบุ Username และ Password",
       });
     }
 
-    const createdBy = req.user.username; // From auth middleware
+    const createdBy = req.user?.username || "SYSTEM";
     const newUser = await userService.createUser(req.body, createdBy);
 
     res.status(201).json({
       success: true,
-      message: "User created successfully",
+      message: "สร้างผู้ใช้สำเร็จแล้ว",
       data: newUser,
     });
   } catch (error) {
-    console.error("Create user error:", error);
+    console.error("[UserController] createUser Error:", error);
 
-    if (
-      error.message === "Username already exists" ||
-      error.message === "Email already exists"
-    ) {
+    // เช็คกรณีข้อมูลซ้ำ (Unique Constraint)
+    if (error.message.includes("ถูกใช้งานไปแล้ว")) {
       return res.status(409).json({
         success: false,
         message: error.message,
@@ -107,42 +104,37 @@ exports.createUser = async (req, res) => {
 
     res.status(500).json({
       success: false,
-      message: "Internal server error",
-      error: error.message,
+      message: "ไม่สามารถสร้างผู้ใช้ได้",
     });
   }
 };
 
 /**
- * PUT /api/v1/users/:id
- * Update user
+ * [PUT] อัปเดตข้อมูลผู้ใช้
  */
 exports.updateUser = async (req, res) => {
   try {
     const { id } = req.params;
-    const updatedBy = req.user.username; // From auth middleware
+    const updatedBy = req.user?.username || "SYSTEM";
 
     const updatedUser = await userService.updateUser(id, req.body, updatedBy);
 
     res.json({
       success: true,
-      message: "User updated successfully",
+      message: "อัปเดตข้อมูลผู้ใช้สำเร็จแล้ว",
       data: updatedUser,
     });
   } catch (error) {
-    console.error("Update user error:", error);
+    console.error("[UserController] updateUser Error:", error);
 
-    if (error.message === "User not found") {
+    if (error.status === 404) {
       return res.status(404).json({
         success: false,
         message: error.message,
       });
     }
 
-    if (
-      error.message === "Username already exists" ||
-      error.message === "Email already exists"
-    ) {
+    if (error.message.includes("ถูกใช้งานไปแล้ว")) {
       return res.status(409).json({
         success: false,
         message: error.message,
@@ -151,31 +143,27 @@ exports.updateUser = async (req, res) => {
 
     res.status(500).json({
       success: false,
-      message: "Internal server error",
-      error: error.message,
+      message: "ไม่สามารถอัปเดตข้อมูลผู้ใช้ได้",
     });
   }
 };
 
 /**
- * DELETE /api/v1/users/:id
- * Delete user (soft delete)
+ * [DELETE] ลบผู้ใช้
  */
 exports.deleteUser = async (req, res) => {
   try {
     const { id } = req.params;
-    const deletedBy = req.user.username; // From auth middleware
-
-    const result = await userService.deleteUser(id, deletedBy);
+    const result = await userService.deleteUser(id);
 
     res.json({
       success: true,
       message: result.message,
     });
   } catch (error) {
-    console.error("Delete user error:", error);
+    console.error("[UserController] deleteUser Error:", error);
 
-    if (error.message === "User not found") {
+    if (error.status === 404) {
       return res.status(404).json({
         success: false,
         message: error.message,
@@ -184,8 +172,7 @@ exports.deleteUser = async (req, res) => {
 
     res.status(500).json({
       success: false,
-      message: "Internal server error",
-      error: error.message,
+      message: "ไม่สามารถลบผู้ใช้ได้",
     });
   }
 };

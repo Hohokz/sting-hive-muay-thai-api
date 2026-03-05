@@ -1,316 +1,151 @@
-// controllers/classesScheduleController.js
-
-const scheduleService = require("../services/classesScheduleService");
-
-// =================================================================
-// HELPER: ERROR RESPONSE
-// =================================================================
+const classesScheduleService = require("../services/classesScheduleService");
 
 /**
- * ฟังก์ชันช่วยเหลือสำหรับการจัดการ Error Response จาก Service Layer
- * โดยจะใช้ status ที่กำหนดไว้ใน error (400, 409, 404) หรือ 500 เป็น default
+ * [GET] ดึงตารางเรียนทั้งหมด
  */
-const handleServiceError = (res, error) => {
-  // ดึง status code ที่เรากำหนดใน Service (error.status)
-  const statusCode = error.status || 500;
-
-  // สำหรับ 500 Internal Error, ป้องกันการเปิดเผยรายละเอียด Stack Trace
-  const message =
-    statusCode === 500 && error.message.includes("Internal server error")
-      ? "Internal Server Error"
-      : error.message;
-
-  return res.status(statusCode).json({
-    success: false,
-    message: message,
-  });
-};
-
-// =================================================================
-// CONTROLLER FUNCTIONS (รับผิดชอบ HTTP Request/Response)
-// =================================================================
-
-// [CREATE] POST /api/v1/schedules
-const createSchedule = async (req, res) => {
-  const { start_time, end_time, gym_enum, capacity } = req.body;
-  console.log("[Controller] createSchedule hit. Body:", req.body);
-
-  // 1. Validation ขั้นต้น (Controller Responsibility)
-  if (!start_time || !end_time || !gym_enum || capacity === undefined) {
-    console.log("[Controller] Validation failed: Missing required fields");
-    return res.status(400).json({
-      success: false,
-      message:
-        "Missing required fields: start_time, end_time, gym_enum, and capacity are required.",
-    });
-  }
-
+exports.getSchedules = async (req, res) => {
   try {
-    // 2. เรียกใช้ Service Layer
-    console.log("[Controller] Calling service.createSchedule...");
-    const newSchedule = await scheduleService.createSchedule(req.body, req.user);
-
-
-    // 3. ส่ง Response สำเร็จ
-    return res.status(201).json({
-      success: true,
-      message: "Class Schedule created successfully.",
-      data: newSchedule,
-    });
+    const { gym_enum } = req.query;
+    const schedules = await classesScheduleService.getSchedules(gym_enum);
+    res.json({ success: true, data: schedules });
   } catch (error) {
-    // 4. จัดการ Error
-    console.error("[Controller] Error in createSchedule:", error.message);
-    handleServiceError(res, error);
+    console.error("[ScheduleController] getSchedules Error:", error);
+    res.status(500).json({ success: false, message: "ไม่สามารถดึงตารางเรียนได้" });
   }
 };
 
-// [UPDATE] PUT /api/v1/schedules/:id
-const updateSchedule = async (req, res) => {
-  const { id } = req.params;
-
-  // Validation ขั้นต้น
-  if (!req.body || Object.keys(req.body).length === 0) {
-    return res.status(400).json({
-      success: false,
-      message: "Request body cannot be empty for update.",
-    });
-  }
-
+/**
+ * [GET] ตรวจสอบคลาสว่างตามวันที่เลือก
+ */
+exports.getAvailableSchedulesByBookingDate = async (req, res) => {
   try {
-    const updatedSchedule = await scheduleService.updateSchedule(id, req.body, req.user);
-
-
-    return res.status(200).json({
-      success: true,
-      message: `Schedule ID ${id} updated successfully.`,
-      data: updatedSchedule,
-    });
-  } catch (error) {
-    handleServiceError(res, error);
-  }
-};
-// [READ] GET /api/v1/schedules
-const getSchedules = async (req, res) => {
-  // รับค่ากรองช่วงเวลาจาก Query parameters
-  const { start_date, end_date } = req.query;
-
-  try {
-    const schedules = await scheduleService.getSchedules(start_date, end_date);
-
-    return res.status(200).json({
-      success: true,
-      count: schedules.length,
-      data: schedules,
-    });
-  } catch (error) {
-    handleServiceError(res, error);
-  }
-};
-
-const getAvailableSchedules = async (req, res) => {
-  const { date, gym_enum, is_private_class } = req.query;
-  console.log("[Controller] getAvailableSchedules hit with query:", req.query);
-
-  if (!date) {
-    return res.status(400).json({
-      success: false,
-      message: "date is required (YYYY-MM-DD)",
-    });
-  }
-
-  try {
-    const data = await scheduleService.getAvailableSchedulesByBookingDate(
-      date,
-      gym_enum,
-      is_private_class
-    );
-
-    return res.status(200).json({
-      success: true,
-      message: "Available schedules retrieved successfully.",
-      data,
-    });
-  } catch (error) {
-    // ✅ ถ้าคุณมี handleServiceError อยู่แล้ว
-    if (typeof handleServiceError === "function") {
-      return handleServiceError(res, error);
+    const { date, gym_enum } = req.query;
+    if (!date) {
+      return res.status(400).json({ success: false, message: "กรุณาระบุวันที่ (date)" });
     }
 
-    // ✅ fallback กรณีไม่มี util
-    console.error("[Controller Error] getAvailableSchedules:", error);
-
-    return res.status(error.status || 500).json({
-      success: false,
-      message: error.message || "Internal server error",
-    });
-  }
-};
-
-// [DELETE] DELETE /api/v1/schedules/:id
-const deleteSchedule = async (req, res) => {
-  const { id } = req.params;
-
-  try {
-    const result = await scheduleService.deleteSchedule(id, req.user);
-
-
-    return res.status(200).json({
-      success: true,
-      message: result.message,
-    });
+    const availableSchedules = await classesScheduleService.getAvailableSchedulesByBookingDate(date, gym_enum);
+    res.json({ success: true, data: availableSchedules });
   } catch (error) {
-    handleServiceError(res, error);
+    console.error("[ScheduleController] getAvailableByDate Error:", error);
+    res.status(500).json({ success: false, message: "ไม่สามารถตรวจสอบคลาสว่างได้" });
   }
 };
 
-const createScheduleInAdvance = async (req, res) => {
-  const { schedule_id, start_date, end_date, gyms_id, capacity, is_close_gym } =
-    req.body;
-
-  // 1. Validation ขั้นต้น
-  // - ต้องมี start_date และ end_date เสมอ
-  // - ถ้าเป็นปิดยิม (is_close_gym = true) → ต้องมี gyms_id
-  // - ถ้าไม่ใช่ปิดยิม → ต้องมี schedule_id (gyms_id หาได้จาก schedule)
-  if (!start_date || !end_date) {
-    return res.status(400).json({
-      success: false,
-      message: "Missing required fields: start_date and end_date are required.",
-    });
-  }
-
-  if (is_close_gym && !gyms_id) {
-    return res.status(400).json({
-      success: false,
-      message: "gyms_id is required when closing a gym.",
-    });
-  }
-
-  if (!is_close_gym && !schedule_id) {
-    return res.status(400).json({
-      success: false,
-      message: "schedule_id is required for capacity adjustment.",
-    });
-  }
-
+/**
+ * [POST] สร้างตารางเรียนใหม่
+ */
+exports.createSchedule = async (req, res) => {
   try {
-    // 2. เรียกใช้ Service Layer
-    const result = await scheduleService.createAdvancedSchedule(req.body, req.user);
+    const result = await classesScheduleService.createSchedule(req.body);
+    res.status(201).json({ success: true, message: "สร้างตารางเรียนสำเร็จ", data: result });
+  } catch (error) {
+    console.error("[ScheduleController] createSchedule Error:", error);
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
 
+/**
+ * [PUT] อัปเดตตารางเรียน
+ */
+exports.updateSchedule = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await classesScheduleService.updateSchedule(id, req.body);
+    res.json({ success: true, message: "อัปเดตตารางเรียนสำเร็จ", data: result });
+  } catch (error) {
+    console.error("[ScheduleController] updateSchedule Error:", error);
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
 
-    // 3. ส่ง Response
-    if (result.warningMessage) {
-      return res.status(201).json({
-        success: true,
-        message: `Config created successfully. Warning: ${result.warningMessage}`,
-        data: result.record,
-      });
-    } else {
-      return res.status(201).json({
-        success: true,
-        message: "Config created successfully.",
-        data: result.record,
-      });
+/**
+ * [DELETE] ลบตารางเรียน
+ */
+exports.deleteSchedule = async (req, res) => {
+  try {
+    const { id } = req.params;
+    await classesScheduleService.deleteSchedule(id);
+    res.json({ success: true, message: "ลบตารางเรียนสำเร็จ" });
+  } catch (error) {
+    console.error("[ScheduleController] deleteSchedule Error:", error);
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * [GET] ตรวจสอบสถานะ Capacity แบบ Real-time (สำหรับหน้า Dashboard/Admin)
+ */
+exports.getScheduleRealtimeAvailability = async (req, res) => {
+  try {
+    const { schedule_id, date } = req.query;
+    if (!schedule_id || !date) {
+      return res.status(400).json({ success: false, message: "กรุณาระบุ schedule_id และ date" });
     }
+
+    const availability = await classesScheduleService.getScheduleRealtimeAvailability(schedule_id, date);
+    res.json({ success: true, data: availability });
   } catch (error) {
-    console.error(
-      "[Controller] Error in createScheduleInAdvance:",
-      error.message
-    );
-    handleServiceError(res, error);
+    console.error("[ScheduleController] getRealtime Error:", error);
+    res.status(500).json({ success: false, message: "ไม่สามารถดึงข้อมูล Real-time ได้" });
   }
 };
 
-const getAdvancedSchedules = async (req, res) => {
+// --- Advanced Schedule Configurations (การตั้งค่าล่วงหน้า/วันหยุด) ---
+
+/**
+ * [GET] ดึงรายการการตั้งค่าล่วงหน้าทั้งหมด
+ */
+exports.getAdvancedSchedules = async (req, res) => {
   try {
-    const filters = {
-      start_date: req.query.start_date,
-      end_date: req.query.end_date,
-      gym_enum: req.query.gym_enum,
-    };
-
-    const result = await scheduleService.getAdvancedSchedules(filters);
-
-    return res.status(200).json({
-      success: true,
-      data: result,
-    });
+    const advanced = await classesScheduleService.getAdvancedSchedules();
+    res.json({ success: true, data: advanced });
   } catch (error) {
-    console.error("[Controller] Error in getAdvancedSchedules:", error.message);
-    handleServiceError(res, error);
+    console.error("[ScheduleController] getAdvanced Error:", error);
+    res.status(500).json({ success: false, message: "ไม่สามารถดึงข้อมูลการตั้งค่าล่วงหน้าได้" });
   }
 };
 
-const updateAdvancedSchedule = async (req, res) => {
-  const { id } = req.params;
-
-  // Validation: body cannot be empty
-  if (!req.body || Object.keys(req.body).length === 0) {
-    return res.status(400).json({
-      success: false,
-      message: "Request body cannot be empty for update.",
-    });
-  }
-
+/**
+ * [POST] สร้างการตั้งค่าล่วงหน้าใหม่
+ */
+exports.createAdvancedSchedule = async (req, res) => {
   try {
-    const updatedConfig = await scheduleService.updateAdvancedSchedule(
-      id,
-      req.body,
-      req.user
-    );
-
-
-
-    return res.status(200).json({
-      success: true,
-      message: `Advanced schedule config ID ${id} updated successfully.`,
-      data: updatedConfig,
-    });
+    const performedByUser = req.user;
+    const result = await classesScheduleService.createAdvancedSchedule(req.body, performedByUser);
+    res.status(201).json({ success: true, message: "สร้างการตั้งค่าล่วงหน้าสำเร็จ", data: result });
   } catch (error) {
-    console.error(
-      "[Controller] Error in updateAdvancedSchedule:",
-      error.message
-    );
-    handleServiceError(res, error);
+    console.error("[ScheduleController] createAdvanced Error:", error);
+    res.status(400).json({ success: false, message: error.message });
   }
 };
 
-const deleteAdvancedSchedule = async (req, res) => {
-  const { id } = req.params;
-
+/**
+ * [PUT] อัปเดตการตั้งค่าล่วงหน้า
+ */
+exports.updateAdvancedSchedule = async (req, res) => {
   try {
-    const result = await scheduleService.deleteAdvancedSchedule(id, req.user);
-
-
-    return res.status(200).json({
-      success: true,
-      message: result.message,
-    });
+    const { id } = req.params;
+    const performedByUser = req.user;
+    const result = await classesScheduleService.updateAdvancedSchedule(id, req.body, performedByUser);
+    res.json({ success: true, message: "อัปเดตการตั้งค่าล่วงหน้าสำเร็จ", data: result });
   } catch (error) {
-    console.error(
-      "[Controller] Error in deleteAdvancedSchedule:",
-      error.message
-    );
-    handleServiceError(res, error);
+    console.error("[ScheduleController] updateAdvanced Error:", error);
+    res.status(400).json({ success: false, message: error.message });
   }
 };
 
-const activeScheduleInAdvance = async (req, res) => {
+/**
+ * [DELETE] ลบการตั้งค่าล่วงหน้า
+ */
+exports.deleteAdvancedSchedule = async (req, res) => {
   try {
-    return await scheduleService.activeScheduleInAdvance();
+    const { id } = req.params;
+    const performedByUser = req.user;
+    await classesScheduleService.deleteAdvancedSchedule(id, performedByUser);
+    res.json({ success: true, message: "ลบการตั้งค่าล่วงหน้าสำเร็จ" });
   } catch (error) {
-    handleServiceError(res, error);
+    console.error("[ScheduleController] deleteAdvanced Error:", error);
+    res.status(400).json({ success: false, message: error.message });
   }
-};
-
-module.exports = {
-  createSchedule,
-  getSchedules,
-  updateSchedule,
-  deleteSchedule,
-  getAvailableSchedules,
-  createScheduleInAdvance,
-  getAdvancedSchedules,
-  updateAdvancedSchedule,
-  deleteAdvancedSchedule,
-  activeScheduleInAdvance,
 };

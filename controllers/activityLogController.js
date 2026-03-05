@@ -1,34 +1,22 @@
 const activityLogService = require("../services/activityLogService");
 
 /**
- * ดึงรายการ Activity Log (สำหรับ Admin)
+ * [GET] ดึงรายการ Activity Log ทั้งหมด (พร้อม Filters)
  */
-const getActivityLogs = async (req, res) => {
+exports.getActivityLogs = async (req, res) => {
   try {
-    const { service, action, user_id, limit, offset } = req.query;
-    
-    const logs = await activityLogService.getActivityLogs({
-      service,
-      action,
-      user_id,
-      limit,
-      offset,
-    });
+    const logs = await activityLogService.getActivityLogs(req.query);
 
     res.status(200).json({
       success: true,
-      data: logs,
+      data: logs.logs,
+      total: logs.total,
     });
   } catch (error) {
-    console.error("[ActivityLogController] Get Logs Error:", error);
+    console.error("[ActivityLogController] getActivityLogs Error:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to retrieve activity logs",
-      error: error.message,
+      message: "ไม่สามารถดึงข้อมูล Activity Log ได้",
     });
   }
-};
-
-module.exports = {
-  getActivityLogs,
 };

@@ -1,12 +1,12 @@
-const { User, Gyms, TrainerGyms, ClassesBooking, ClassesSchedule } = require("../models/Associations");
+const { User, Gyms, TrainerGyms, ClassesBooking } = require("../models/Associations");
 const { Op } = require("sequelize");
-const { sequelize } = require("../config/db");
 const activityLogService = require("./activityLogService");
-const { getDailyBookings } = require("../controllers/dashboardController");
+const dayjs = require("dayjs");
 
 /**
- * ดึงรายชื่อเทรนเนอร์ที่ผูกกับยิมที่เลือก
+ * [READ] ดึงรายชื่อเทรนเนอร์ที่ผูกกับยิมที่เลือก (และตรวจสอบคิวว่างถ้ามีการระบุวันที่/คลาส)
  * @param {number} gymId 
+ * @param {object} options { date, classes_schedule_id }
  */
 const getTrainersByGym = async (gymId, options = {}) => {
   try {
@@ -21,53 +21,29 @@ const getTrainersByGym = async (gymId, options = {}) => {
       ],
     });
 
-    if (!gym) {
-      throw new Error("Gym not found");
-    }
+    if (!gym) throw new Error("ไม่พบข้อมูลยิมที่ระบุ");
 
     let trainers = gym.trainers;
 
-    // -------------------------------------------------------------
-    // Filter trainers if date & schedule are provided
-    // -------------------------------------------------------------
+    // --- ถ้ามีการระบุวันที่และตารางเรียน ให้คัดกรองเทรนเนอร์ที่ติดสอนออก ---
     if (options.date && options.classes_schedule_id) {
-      const targetDate = new Date(options.date);
+      const startOfDay = dayjs(options.date).startOf("day").toDate();
+      const endOfDay = dayjs(options.date).endOf("day").toDate();
 
-    const startOfDay = new Date(targetDate.setHours(0, 0, 0, 0));
-    const endOfDay = new Date(targetDate.setHours(23, 59, 59, 999));
-    console.log("startOfDay", startOfDay);
-    console.log("endOfDay", endOfDay);
-      // Fetch Schedule Time
-    const bookings = await ClassesBooking.findAll({
+      // ดึงการจองที่มีการระบุเทรนเนอร์ในวันนั้นและคลาสนั้น
+      const bookings = await ClassesBooking.findAll({
         where: {
-            // หากต้องการหา "ทุกการจอง" ในวันที่นั้นของ Schedule นี้
-            classes_schedule_id: options.classes_schedule_id, 
-            date_booking: { 
-                [Op.between]: [startOfDay, endOfDay]
-            }
-        },
-        // (Optional) เรียงลำดับตามเวลาจองจากน้อยไปมาก
-        order: [['date_booking', 'ASC']] 
-    });
-
-    if(bookings.length === 0){
-      return trainers;
-    }
-
-    const busyTrainers = [];
-
-      for (const b of bookings) {
-        if(b.trainer){
-          busyTrainers.push(b.trainer);
+          classes_schedule_id: options.classes_schedule_id, 
+          date_booking: { [Op.between]: [startOfDay, endOfDay] }
         }
-      }
-
-      console.log("busyTrainers", busyTrainers);
-
-      trainers = trainers.filter(t => {
-        if (busyTrainers.includes(t.name)) return false; 
-        return true;
       });
+
+      if (bookings.length > 0) {
+        const busyTrainerNames = bookings.map(b => b.trainer).filter(Boolean);
+        
+        // คัดออก: เทรนเนอร์ที่ชื่ออยู่ในรายการ busy
+        trainers = trainers.filter(t => !busyTrainerNames.includes(t.name));
+      }
     }
 
     return trainers;
@@ -78,7 +54,7 @@ const getTrainersByGym = async (gymId, options = {}) => {
 };
 
 /**
- *ดึงรายชื่อ User ทั้งหมดที่มี role เป็น 'USER' (เพื่อเอามาเลือกเป็นเทรนเนอร์)
+ * [READ] ดึงรายชื่อ User ทั้งหมดที่มีสิทธิ์เป็นเทรนเนอร์ (Role: USER)
  */
 const getAvailableUsersForTrainer = async () => {
   try {
@@ -95,26 +71,26 @@ const getAvailableUsersForTrainer = async () => {
 };
 
 /**
- * ผูก User เข้ากับยิม
+ * [CREATE] ผูกเทรนเนอร์เข้ากับยิม (Assign)
  */
 const assignTrainerToGym = async (userId, gymId, performedByUser = null) => {
   try {
-    // 1. ตรวจสอบว่ามีอยู่แล้วหรือยัง
+    // 1. ตรวจสอบว่ามีการผูกไว้อยู่แล้วหรือไม่
     const existing = await TrainerGyms.findOne({
       where: { user_id: userId, gyms_id: gymId },
     });
 
     if (existing) {
-      throw new Error("This trainer is already assigned to this gym.");
+      throw new Error("เทรนเนอร์ท่านนี้ถูกเพิ่มเข้ายิมนี้อยู่แล้ว");
     }
 
-    // 2. สร้าง record ใหม่
+    // 2. บันทึกความสัมพันธ์
     const record = await TrainerGyms.create({
       user_id: userId,
       gyms_id: gymId,
     });
 
-    // 3. Log Activity
+    // 3. บันทึก Log แบบขนาน
     const [user, gym] = await Promise.all([
       User.findByPk(userId),
       Gyms.findByPk(gymId)
@@ -141,7 +117,7 @@ const assignTrainerToGym = async (userId, gymId, performedByUser = null) => {
 };
 
 /**
- * ยกเลิกการผูก User กับยิม
+ * [DELETE] ยกเลิกการผูกเทรนเนอร์ออกจากยิม (Unassign)
  */
 const removeTrainerFromGym = async (userId, gymId, performedByUser = null) => {
   try {
@@ -155,10 +131,10 @@ const removeTrainerFromGym = async (userId, gymId, performedByUser = null) => {
     });
 
     if (deletedCount === 0) {
-      throw new Error("Relationship not found.");
+      throw new Error("ไม่พบความสัมพันธ์ที่ต้องการลบ");
     }
 
-    // 3. Log Activity
+    // บันทึก Log
     await activityLogService.createLog({
       user_id: performedByUser?.id || null,
       user_name: performedByUser?.name || performedByUser?.username || "ADMIN",
@@ -172,7 +148,7 @@ const removeTrainerFromGym = async (userId, gymId, performedByUser = null) => {
       }
     });
 
-    return { success: true, message: "Trainer removed from gym successfully." };
+    return { success: true, message: "ลบเทรนเนอร์ออกจากยิมสำเร็จ" };
   } catch (error) {
     console.error("[TrainerGymService] removeTrainerFromGym Error:", error);
     throw error;

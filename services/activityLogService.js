@@ -1,28 +1,19 @@
 const { ActivityLog, User, ClassesSchedule, ClassesCapacity } = require("../models/Associations");
 
 /**
- * สร้าง Activity Log ใหม่
- * @param {Object} data 
- * @param {string} data.user_id - UUID ของผู้ใช้ (ถ้ามี)
- * @param {string} data.user_name - ชื่อผู้ใช้ที่ทำรายการ
- * @param {string} data.service - 'BOOKING', 'SCHEDULE', 'USER'
- * @param {string} data.action - Action เช่น 'CREATE', 'UPDATE', 'DELETE'
- * @param {Object} data.details - ข้อมูลเพิ่มเติม (Old vs New values)
- * @param {string} data.ip_address - IP Address ของผู้ทำรายการ
+ * [CREATE] สร้าง Activity Log ใหม่
  */
 const createLog = async (data) => {
   try {
-    const log = await ActivityLog.create(data);
-    return log;
+    return await ActivityLog.create(data);
   } catch (error) {
-    console.error("[ActivityLogService] Create Log Error:", error);
-    // ไม่ throw error เพื่อไม่ให้ขัดจังหวะ process หลัก
+    // ไม่ throw error เพื่อไม่ให้ขัดจังหวะ process หลัก (เช่น ถ้า log พัง แต่การจองสำเร็จ ก็ควรให้การจองผ่าน)
+    console.error("[ActivityLogService] Create Log Error:", error.message);
   }
 };
 
 /**
- * ดึงรายการ Activity Log
- * @param {Object} filters 
+ * [READ] ดึงรายการ Activity Log (พร้อมเติมข้อมูล Schedule ถ้ามี)
  */
 const getActivityLogs = async (filters = {}) => {
   const { service, action, user_id, limit = 50, offset = 0 } = filters;
@@ -47,70 +38,52 @@ const getActivityLogs = async (filters = {}) => {
       offset: parseInt(offset),
     });
 
-    // --- Enrichment: Add schedule details if present in details ---
     const logs = rows.map(r => r.get({ plain: true }));
     const scheduleIds = new Set();
 
+    // 1. รวบรวม Schedule IDs ทั้งหมดจาก details (เพื่อดึงข้อมูลแบบ Batch)
     logs.forEach(log => {
-      if (log.details) {
-        // Collect all possible IDs to fetch in batch
-        const ids = [
-          log.details.classes_schedule_id,
-          log.details.schedule_id,
-          log.details.new_values?.classes_schedule_id,
-          log.details.new_values?.schedule_id,
-          log.details.old_values?.classes_schedule_id,
-          log.details.old_values?.schedule_id
-        ].filter(Boolean);
-        ids.forEach(id => scheduleIds.add(id));
-      }
+      if (!log.details) return;
+      const possibleIds = [
+        log.details.classes_schedule_id,
+        log.details.schedule_id,
+        log.details.new_values?.classes_schedule_id,
+        log.details.new_values?.schedule_id,
+        log.details.old_values?.classes_schedule_id,
+        log.details.old_values?.schedule_id
+      ].filter(Boolean);
+      possibleIds.forEach(id => scheduleIds.add(id));
     });
 
+    // 2. ถ้ามี IDs ให้ไปดึงข้อมูล Schedule และ Capacity มาเติม (Enrichment)
     if (scheduleIds.size > 0) {
-      console.log("🔍 [ActivityLogService] Found IDs to enrich:", Array.from(scheduleIds));
       const schedules = await ClassesSchedule.findAll({
         where: { id: Array.from(scheduleIds) },
         include: [{ model: ClassesCapacity, as: "capacity_data", attributes: ["capacity"] }],
         attributes: ["id", "start_time", "end_time", "gym_enum"]
       });
 
-      console.log("✅ [ActivityLogService] Fetched schedules count:", schedules.length);
       const scheduleMap = new Map(schedules.map(s => [s.id, s.toJSON()]));
 
       logs.forEach(log => {
-        if (log.details) {
-          // 1. Enrich old_values
-          if (log.details.old_values) {
-            const sId = log.details.old_values.classes_schedule_id || log.details.old_values.schedule_id;
-            if (sId && scheduleMap.has(sId)) {
-              log.details.old_values.schedule_details = scheduleMap.get(sId);
-            }
-          }
+        if (!log.details) return;
 
-          // 2. Enrich new_values
-          if (log.details.new_values) {
-            const sId = log.details.new_values.classes_schedule_id || log.details.new_values.schedule_id;
-            if (sId && scheduleMap.has(sId)) {
-              log.details.new_values.schedule_details = scheduleMap.get(sId);
-            }
+        // ฟังก์ชันช่วยเติมข้อมูล
+        const enrich = (target) => {
+          if (!target) return;
+          const sId = target.classes_schedule_id || target.schedule_id;
+          if (sId && scheduleMap.has(sId)) {
+            target.schedule_details = scheduleMap.get(sId);
           }
+        };
 
-          // 3. Enrich top-level details (if it's a create/delete without old/new split)
-          const topSId = log.details.classes_schedule_id || log.details.schedule_id;
-          if (topSId && scheduleMap.has(topSId)) {
-            log.details = {
-              ...log.details,
-              schedule_details: scheduleMap.get(topSId)
-            };
-          }
-        }
+        enrich(log.details.old_values);
+        enrich(log.details.new_values);
+        enrich(log.details); // สำหรับเคสที่เก็บ id ไว้ที่ชั้นนอกของ details
       });
     }
 
-    return {
-      total: count,
-      logs: logs,
-    };
+    return { total: count, logs };
   } catch (error) {
     console.error("[ActivityLogService] Get Logs Error:", error);
     throw error;

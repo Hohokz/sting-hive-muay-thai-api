@@ -1,5 +1,8 @@
 const dashboardService = require("../services/dashboardService");
 
+/**
+ * [GET] ดึงข้อมูลสรุป Dashboard รายวัน (Capacity รวม, จำนวนคนจอง)
+ */
 const getDashboardSummary = async (req, res) => {
   try {
     const { date } = req.query;
@@ -10,39 +13,40 @@ const getDashboardSummary = async (req, res) => {
       data: summary,
     });
   } catch (error) {
-    console.error("Controller Error:", error);
+    console.error("[DashboardController] getSummary Error:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to load dashboard summary",
-      error: error.message // ใส่ไว้เพื่อให้ Debug ง่ายขึ้นในช่วงพัฒนา
+      message: "ไม่สามารถโหลดข้อมูลสรุป Dashboard ได้",
+      error: error.message
     });
   }
 };
 
+/**
+ * [GET] ดึงรายการการจองทั้งหมดของวันที่เลือก (สำหรับตาราง Dashboard)
+ */
 const getDailyBookings = async (req, res) => {
-  const { date } = req.query; // ✅ รับจาก ?date=YYYY-MM-DD
-
-  if (!date) {
-    return res.status(400).json({
-      success: false,
-      message: "date is required (YYYY-MM-DD)",
-    });
-  }
-
   try {
+    const { date } = req.query; // รับรูปแบบ YYYY-MM-DD
+    if (!date) {
+      return res.status(400).json({
+        success: false,
+        message: "กรุณาระบุวันที่ (YYYY-MM-DD)",
+      });
+    }
+
     const data = await dashboardService.getDailyBookingsByDate(date);
 
     return res.status(200).json({
       success: true,
-      message: "Daily bookings retrieved successfully.",
+      message: "ดึงข้อมูลรายการจองสำเร็จ",
       data,
     });
   } catch (error) {
-    console.error("[Controller Error] getDailyBookings:", error);
-
+    console.error("[DashboardController] getDailyBookings Error:", error);
     return res.status(500).json({
       success: false,
-      message: error.message || "Internal server error",
+      message: "เกิดข้อผิดพลาดในการดึงข้อมูลรายการจอง",
     });
   }
 };

@@ -1,8 +1,9 @@
-require("dotenv").config(); // ✅ ต้องอยู่บนสุด
+require("dotenv").config(); // ✅ โหลด Environment Variables ทันทีที่เริ่ม
 
 const express = require("express");
-const { connectDB } = require("./config/db");
 const cors = require("cors");
+const cookieParser = require('cookie-parser');
+const { connectDB } = require("./config/db");
 const { startAdvancedScheduleJob } = require("./job/advancedScheduleJob");
 const { startMonthlyArchivalJob } = require("./job/monthlyArchivalJob");
 
@@ -15,19 +16,14 @@ let isDbConnected = false;
 // -----------------------------------------------------------------
 // A. MIDDLEWARES
 // -----------------------------------------------------------------
-const cookieParser = require('cookie-parser');
 app.use(cookieParser());
+app.use(express.json());
 
-// -----------------------------------------------------------------
-// A. MIDDLEWARES
-// -----------------------------------------------------------------
-
+// ตั้งค่า CORS (Cross-Origin Resource Sharing)
 const allowedOrigins = [
   "http://localhost:5173",
   "http://localhost:5175",
   "https://sting-hive-muay-thai-web.vercel.app",
-  "https://expert-space-giggle-jvqg649wp66cqrjq-5173.app.github.dev",
-  "https://bookish-fishstick-qjpxr96g54wf9p9p-5173.app.github.dev", // ✅ เพิ่มตัวล่าสุดเข้าไป
 ];
 
 app.use(
@@ -35,79 +31,66 @@ app.use(
     origin: (origin, callback) => {
       // 1. อนุญาตถ้าไม่มี origin (เช่นการเรียกผ่าน Postman หรือ Server-to-Server)
       // 2. อนุญาตถ้าอยู่ใน list allowedOrigins
-      // 3. ✅ เทคนิคพิเศษ: ถ้าเป็น codespaces (ลงท้ายด้วย app.github.dev) ให้อนุญาตเลยในช่วง dev
+      // 3. อนุญาตถ้าเป็น codespaces (ลงท้ายด้วย app.github.dev) เพื่อความสะดวกในการพัฒนา
       if (
         !origin ||
         allowedOrigins.includes(origin) ||
-        origin.endsWith(".app.github.dev") // 🔥 เพิ่มบรรทัดนี้ จะได้ไม่ต้องคอยแก้ URL บ่อยๆ
+        origin.endsWith(".app.github.dev") 
       ) {
         return callback(null, true);
       }
 
-      console.error(`CORS Error: Origin ${origin} not allowed`); // พ่น log บอกหน่อยว่าตัวไหนที่ติด
+      console.error(`[CORS Error] Origin ${origin} not allowed`);
       callback(new Error("Not allowed by CORS"), false);
     },
-    credentials: true,
+    credentials: true, // อนุญาตให้ส่ง Cookie/Auth Header
   })
 );
 
-app.use(express.json());
-
 // -----------------------------------------------------------------
-// B. DATABASE CONNECTION (Safe for Render & Vercel)
+// B. DATABASE & BACKGROUND JOBS
 // -----------------------------------------------------------------
-
 const setupDatabase = async () => {
   if (isDbConnected) return;
 
   try {
-    console.log("Attempting to connect to database...");
+    console.log("[Server] Connecting to database...");
     await connectDB();
 
     isDbConnected = true;
-    console.log("✅ Database connection successful.");
+    console.log("✅ [Server] Database connected.");
 
-    // 2. เรียกใช้ Job ทันทีที่ DB พร้อม
+    // เริ่มทำงาน Cron Jobs ทันทีเมื่อ DB พร้อม
     startAdvancedScheduleJob();
-    startMonthlyArchivalJob(); // ✅ เริ่ม Job รายเดือน
-    console.log(
-      "⏰ Advanced Schedule & Monthly Archival Cron Jobs initialized."
-    );
+    startMonthlyArchivalJob();
+    console.log("⏰ [Server] Background Jobs initialized.");
   } catch (error) {
-    console.error("❌ [DB Setup Error]", error);
+    console.error("❌ [Server] Database Setup Error:", error);
     isDbConnected = false;
   }
 };
 
-// ✅ เรียกครั้งเดียวตอน start
+// เริ่มต้นเชื่อมต่อฐานข้อมูล
 setupDatabase();
 
 // -----------------------------------------------------------------
-// C. ROUTES
+// C. API ROUTES
 // -----------------------------------------------------------------
 
+// แบ่งกลุ่ม Routes ตามโมดูล
+app.use("/api/v1/auth", require("./routes/authRoutes"));
+app.use("/api/v1/users", require("./routes/userRoutes"));
 app.use("/api/v1/schedules", require("./routes/classesScheduleRoutes"));
 app.use("/api/v1/bookings", require("./routes/classesBookingRoutes"));
 app.use("/api/v1/dashboard", require("./routes/dashBoardRoutes"));
-app.use("/api/v1/auth", require("./routes/authRoutes")); // ✅ Auth Routes
-app.use("/api/v1/users", require("./routes/userRoutes")); // ✅ User CRUD Routes (Admin Only)
-app.use("/api/v1/activity-logs", require("./routes/activityLogRoutes")); // ✅ Activity Log Routes
-app.use("/api/v1/trainer-gyms", require("./routes/trainerGymRoutes")); // ✅ Trainer Gym Routes
+app.use("/api/v1/activity-logs", require("./routes/activityLogRoutes"));
+app.use("/api/v1/trainer-gyms", require("./routes/trainerGymRoutes"));
 
-
+// Health Check Endpoint
 app.get("/", (req, res) => {
-  const dbStatus = isDbConnected ? "Connected" : "Error";
+  const dbStatus = isDbConnected ? "Connected" : "Disconnected (Error)";
 
-  if (!isDbConnected && NODE_ENV === "production") {
-    return res.status(503).json({
-      message:
-        "Sting Hive Muay Thai Backend is operational, but Database is unavailable.",
-      environment: NODE_ENV,
-      db_status: dbStatus,
-    });
-  }
-
-  res.status(200).json({
+  res.status(isDbConnected ? 200 : 503).json({
     message: "Sting Hive Muay Thai Backend is operational.",
     environment: NODE_ENV,
     db_status: dbStatus,
@@ -115,13 +98,12 @@ app.get("/", (req, res) => {
 });
 
 // -----------------------------------------------------------------
-// D. START SERVER (IMPORTANT FOR RENDER)
+// D. START SERVER
 // -----------------------------------------------------------------
-
 if (NODE_ENV !== "test") {
   app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`🚀 [Server] Running on port ${PORT} (${NODE_ENV} mode)`);
   });
 }
 
-module.exports = app; // ✅ ยังรองรับ Vercel ได้
+module.exports = app; // สำหรับการทำ Testing หรือ Deploy บน Vercel

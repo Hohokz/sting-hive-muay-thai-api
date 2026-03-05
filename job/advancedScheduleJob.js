@@ -1,8 +1,5 @@
 const cron = require("node-cron");
 const { Op, Sequelize } = require("sequelize");
-
-// Import Models เพียงครั้งเดียว (ตรวจสอบ Path ให้ถูกต้องตาม Project Structure ของคุณ)
-// สมมติว่า models อยู่ folder ถัดขึ้นไป 1 ชั้น
 const { 
   ClassesSchedule, 
   ClassesCapacity, 
@@ -10,36 +7,34 @@ const {
 } = require("../models/Associations");
 
 /**
- * Advanced Schedule Job
- * - ปิด/เปิด schedules ตาม config ที่ active
- * - Update is_active ของ schedules
- * - Update/Revert Capacity
+ * [CRON JOB] ระบบจัดการตารางเรียนล่วงหน้า
+ * - เปิด/ปิดตารางเรียนตาม Config (เช่น ปิดยิมวันหยุด)
+ * - ปรับเปลี่ยน Capacity ตามช่วงเวลาที่กำหนด
  */
 const startAdvancedScheduleJob = () => {
-  // รันทุกวันเวลา 00:01 น.
+  // รันทุกวันเวลา 00:01 น. เพื่อเตรียมข้อมูลสำหรับวันนั้นๆ
   cron.schedule("01 00 * * *", async () => {
+    console.log("[AdvancedJob] ⏰ เริ่มทำงานระบบตารางเรียนล่วงหน้า...");
     await runAdvancedScheduleJob();
   });
 };
 
 const runAdvancedScheduleJob = async () => {
-  // กำหนดเวลาปัจจุบัน
   const now = new Date();
-  // แปลงเป็น String YYYY-MM-DD (ระวังเรื่อง Timezone ของ Server ดีๆ ครับ แนะนำให้เช็คว่า Server เวลาตรงกับไทยไหม)
-  const todayStr = now.toISOString().split("T")[0];
+  const todayStr = now.toISOString().split("T")[0]; // รูปแบบ YYYY-MM-DD
   
   const yesterday = new Date(now);
   yesterday.setDate(yesterday.getDate() - 1);
   const yesterdayStr = yesterday.toISOString().split("T")[0];
 
-  console.log("===========================================");
-  console.log(`[Advanced Schedule Job] Date: ${todayStr}`);
-  console.log("===========================================");
+  console.log(`[AdvancedJob] 📅 วันนี้: ${todayStr} | เมื่อวาน: ${yesterdayStr}`);
 
   try {
-    // ----------------------------------------------------
-    // 1. หา Gym Closures ที่ Active วันนี้
-    // ----------------------------------------------------
+    // -----------------------------------------------------------------
+    // 1. ตรวจสอบ Config ที่เริ่มมีผล "วันนี้"
+    // -----------------------------------------------------------------
+
+    // ค้นหาคำสั่งปิดยิม (is_close_gym = true)
     const activeClosures = await ClassesBookingInAdvance.findAll({
       where: {
         is_close_gym: true,
@@ -51,9 +46,7 @@ const runAdvancedScheduleJob = async () => {
       },
     });
 
-    // ----------------------------------------------------
-    // 2. หา Capacity Configs ที่ Active วันนี้
-    // ----------------------------------------------------
+    // ค้นหาคำสั่งปรับ Capacity (ส่วนตัวรายบุคคล)
     const activeCapacities = await ClassesBookingInAdvance.findAll({
       where: {
         is_close_gym: false,
@@ -66,30 +59,31 @@ const runAdvancedScheduleJob = async () => {
       },
     });
 
-    // --- Action 1: Deactivate Schedules ---
+    // --- Action: ปิดตารางเรียน (is_active = false) ---
     let closedCount = 0;
     for (const closure of activeClosures) {
       const [updated] = await ClassesSchedule.update(
         { is_active: false },
         { where: { gyms_id: closure.gyms_id } }
       );
-      if (updated) closedCount += updated; // นับจำนวน row ที่ถูก update จริง
+      if (updated) closedCount += updated;
     }
 
-    // --- Action 2: Update Capacity ---
-    let capacityUpdatedCount = 0;
+    // --- Action: ปรับ Capacity ---
+    let capUpdatedCount = 0;
     for (const config of activeCapacities) {
-      // อัปเดตตาราง CLASSES_CAPACITY โดยใช้ classes_id เป็นตัวเชื่อม
       const [updated] = await ClassesCapacity.update(
         { capacity: config.capacity },
         { where: { classes_id: config.classes_schedule_id } }
       );
-      if (updated) capacityUpdatedCount++;
+      if (updated) capUpdatedCount++;
     }
 
-    // ----------------------------------------------------
-    // 3. หา Gym Closures ที่หมดอายุเมื่อวาน (เตรียมเปิดคืน)
-    // ----------------------------------------------------
+    // -----------------------------------------------------------------
+    // 2. ตรวจสอบ Config ที่ "หมดอายุ" เมื่อวาน (ต้องคืนค่าเดิม)
+    // -----------------------------------------------------------------
+
+    // ค้นหาคำสั่งปิดยิมที่เพิ่งหมดเขต
     const expiredClosures = await ClassesBookingInAdvance.findAll({
       where: {
         is_close_gym: true,
@@ -100,24 +94,22 @@ const runAdvancedScheduleJob = async () => {
       },
     });
 
-    // ----------------------------------------------------
-    // 4. หา Capacity Configs ที่หมดอายุเมื่อวาน (เตรียมคืนค่าเดิม)
-    // ----------------------------------------------------
+    // ค้นหาคำสั่งปรับ Capacity ที่เพิ่งหมดเขต
     const expiredCapacities = await ClassesBookingInAdvance.findAll({
       where: {
         is_close_gym: false,
         classes_schedule_id: { [Op.not]: null },
-        old_capasity: { [Op.not]: null }, // ต้องมีค่าเดิมให้คืน
+        old_capasity: { [Op.not]: null },
         [Op.and]: [
           Sequelize.where(Sequelize.fn("DATE", Sequelize.col("end_date")), "=", yesterdayStr),
         ],
       },
     });
 
-    // --- Action 3: Reactivate Schedules ---
+    // --- Action: เปิดตารางเรียนคืน (Reactivate) ---
     let reopenedCount = 0;
     for (const closure of expiredClosures) {
-      // เช็คว่ายังมีคำสั่งปิดอื่นที่ Active อยู่หรือไม่
+      // เช็คว่ามี Config อื่นที่สั่งปิดยิมนี้อยู่ซ้อนกันหรือไม่
       const stillActive = await ClassesBookingInAdvance.count({
         where: {
           gyms_id: closure.gyms_id,
@@ -138,10 +130,10 @@ const runAdvancedScheduleJob = async () => {
       }
     }
 
-    // --- Action 4: Revert Capacity ---
-    let capacityRevertedCount = 0;
+    // --- Action: คืนค่า Capacity เดิม ---
+    let capRevertedCount = 0;
     for (const config of expiredCapacities) {
-      // เช็คว่ายังมีคำสั่งปรับ Capacity อื่นที่ Active อยู่หรือไม่
+      // เช็คว่ามี Config อื่นที่ปรับค่าตารางนี้ซ้อนกันหรือไม่
       const stillActive = await ClassesBookingInAdvance.count({
         where: {
           classes_schedule_id: config.classes_schedule_id,
@@ -154,30 +146,24 @@ const runAdvancedScheduleJob = async () => {
       });
 
       if (stillActive === 0) {
-        // คืนค่าจาก old_capasity
         const [updated] = await ClassesCapacity.update(
           { capacity: config.old_capasity },
           { where: { classes_id: config.classes_schedule_id } }
         );
-        if (updated) capacityRevertedCount++;
+        if (updated) capRevertedCount++;
       }
     }
 
-    // --- Logging ---
-    console.log("[Job] Summary Report:");
-    console.log(` - Active Closures Found: ${activeClosures.length}`);
-    console.log(` - Schedules Deactivated (Rows): ${closedCount}`);
-    console.log(` - Active Capacities Found: ${activeCapacities.length}`);
-    console.log(` - ClassesCapacity Updated: ${capacityUpdatedCount}`);
-    console.log("-------------------------------------------");
-    console.log(` - Expired Closures Found: ${expiredClosures.length}`);
-    console.log(` - Schedules Reopened (Rows): ${reopenedCount}`);
-    console.log(` - Expired Capacities Found: ${expiredCapacities.length}`);
-    console.log(` - ClassesCapacity Reverted: ${capacityRevertedCount}`);
-    console.log("===========================================\n");
+    // --- รายงานผลการทำงาน ---
+    console.log("[AdvancedJob] 📊 สรุปการทำงาน:");
+    console.log(`  - 🔴 ปิดยิม/ตาราง (วันนี้): ${closedCount} รายการ`);
+    console.log(`  - ⚖️ ปรับ Capacity (วันนี้): ${capUpdatedCount} รายการ`);
+    console.log(`  - 🟢 เปิดยิมคืน (หมดอายุ): ${reopenedCount} รายการ`);
+    console.log(`  - 🔄 คืนค่า Capacity (หมดอายุ): ${capRevertedCount} รายการ`);
+    console.log("-------------------------------------------\n");
 
   } catch (error) {
-    console.error("[Job Error]:", error);
+    console.error("[AdvancedJob] ❌ เกิดข้อผิดพลาด:", error);
   }
 };
 
