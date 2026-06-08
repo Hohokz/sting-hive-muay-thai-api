@@ -2,7 +2,7 @@ require("dotenv").config(); // ✅ โหลด Environment Variables ทัน�
 
 const express = require("express");
 const cors = require("cors");
-const cookieParser = require('cookie-parser');
+const cookieParser = require("cookie-parser");
 const { connectDB } = require("./config/db");
 const { startAdvancedScheduleJob } = require("./job/advancedScheduleJob");
 const { startMonthlyArchivalJob } = require("./job/monthlyArchivalJob");
@@ -24,6 +24,7 @@ const allowedOrigins = [
   "http://localhost:5173",
   "http://localhost:5175",
   "https://sting-hive-muay-thai-web.vercel.app",
+  "https://stingmuaythaichiangmai.com",
 ];
 
 app.use(
@@ -35,7 +36,7 @@ app.use(
       if (
         !origin ||
         allowedOrigins.includes(origin) ||
-        origin.endsWith(".app.github.dev") 
+        origin.endsWith(".app.github.dev")
       ) {
         return callback(null, true);
       }
@@ -44,7 +45,7 @@ app.use(
       callback(new Error("Not allowed by CORS"), false);
     },
     credentials: true, // อนุญาตให้ส่ง Cookie/Auth Header
-  })
+  }),
 );
 
 // -----------------------------------------------------------------
