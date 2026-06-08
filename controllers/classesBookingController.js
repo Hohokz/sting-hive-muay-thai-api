@@ -6,7 +6,10 @@ const classesBookingService = require("../services/classesBookingService");
 exports.createBooking = async (req, res) => {
   try {
     const performedByUser = req.user;
-    const result = await classesBookingService.createBooking(req.body, performedByUser);
+    const result = await classesBookingService.createBooking(
+      req.body,
+      performedByUser,
+    );
 
     res.status(201).json({
       success: true,
@@ -29,7 +32,11 @@ exports.updateBooking = async (req, res) => {
   try {
     const { id } = req.params;
     const performedByUser = req.user;
-    const result = await classesBookingService.updateBooking(id, req.body, performedByUser);
+    const result = await classesBookingService.updateBooking(
+      id,
+      req.body,
+      performedByUser,
+    );
 
     res.status(200).json({
       success: true,
@@ -54,7 +61,11 @@ exports.updateBookingStatus = async (req, res) => {
     const { booking_status } = req.body;
     const performedByUser = req.user;
 
-    const result = await classesBookingService.updateBookingStatus(id, booking_status, performedByUser);
+    const result = await classesBookingService.updateBookingStatus(
+      id,
+      booking_status,
+      performedByUser,
+    );
 
     res.status(200).json({
       success: true,
@@ -79,7 +90,11 @@ exports.updateBookingNote = async (req, res) => {
     const { note } = req.body;
     const performedByUser = req.user;
 
-    const result = await classesBookingService.updateBookingNote(id, note, performedByUser);
+    const result = await classesBookingService.updateBookingNote(
+      id,
+      note,
+      performedByUser,
+    );
 
     res.status(200).json({
       success: true,
@@ -103,7 +118,11 @@ exports.updateBookingTrainer = async (req, res) => {
     const { trainer } = req.body;
     const performedByUser = req.user;
 
-    const result = await classesBookingService.updateBookingTrainer(id, trainer, performedByUser);
+    const result = await classesBookingService.updateBookingTrainer(
+      id,
+      trainer,
+      performedByUser,
+    );
 
     res.status(200).json({
       success: true,
@@ -127,7 +146,11 @@ exports.updateBookingPayment = async (req, res) => {
     const { payment_status } = req.body;
     const performedByUser = req.user;
 
-    const result = await classesBookingService.updateBookingPayment(id, payment_status, performedByUser);
+    const result = await classesBookingService.updateBookingPayment(
+      id,
+      payment_status,
+      performedByUser,
+    );
 
     res.status(200).json({
       success: true,
@@ -148,7 +171,9 @@ exports.updateBookingPayment = async (req, res) => {
 exports.getBookings = async (req, res) => {
   try {
     const bookings = await classesBookingService.getBookings(req.query);
-    res.status(200).json({ success: true, count: bookings.length, data: bookings });
+    res
+      .status(200)
+      .json({ success: true, count: bookings.length, data: bookings });
   } catch (error) {
     console.error("[BookingController] getBookings Error:", error);
     res.status(error.status || 400).json({
@@ -164,9 +189,31 @@ exports.getBookings = async (req, res) => {
 exports.getTrainerForRequest = async (req, res) => {
   try {
     const trainers = await classesBookingService.getTrainerForRequest();
-    res.status(200).json({ success: true, count: trainers.length, data: trainers });
+    res
+      .status(200)
+      .json({ success: true, count: trainers.length, data: trainers });
   } catch (error) {
     console.error("[BookingController] getTrainerForRequest Error:", error);
-    res.status(500).json({ success: false, message: "เกิดข้อผิดพลาดในการดึงข้อมูลผู้สอน" });
+    res
+      .status(500)
+      .json({ success: false, message: "เกิดข้อผิดพลาดในการดึงข้อมูลผู้สอน" });
+  }
+};
+
+exports.exportBookingsToCSV = async (req, res) => {
+  try {
+    const { csv, filename } = await classesBookingService.exportBookingsToCSV(
+      req.query,
+    );
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+
+    res.send(csv);
+  } catch (error) {
+    console.error("[BookingController] exportBookingsToCSV Error:", error);
+    res
+      .status(500)
+      .json({ success: false, message: "เกิดข้อผิดพลาดในการส่งออกข้อมูล" });
   }
 };

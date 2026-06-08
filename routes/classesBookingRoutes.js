@@ -32,12 +32,18 @@ router.patch(
 );
 
 // PATCH /api/v1/bookings/:id/cancel
-router.patch("/:id/cancel", extractUserIfPresent, bookingController.updateBookingStatus);
+router.patch(
+  "/:id/cancel",
+  extractUserIfPresent,
+  bookingController.updateBookingStatus,
+);
 
 // GET /api/v1/bookings/trainers
 router.get("/trainers", bookingController.getTrainerForRequest);
 
 // GET /api/v1/bookings/:name
 // router.get("/:name", bookingController.getBookingByName);
+
+router.get("/export", bookingController.exportBookingsToCSV);
 
 module.exports = router;

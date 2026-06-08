@@ -4,16 +4,19 @@ const {
   ClassesCapacity,
   ClassesBookingInAdvance,
   User,
+  Gyms,
 } = require("../models/Associations");
 const { sequelize } = require("../config/db");
 const { Op } = require("sequelize");
 const fs = require("fs");
 const path = require("path");
 const { sendBookingConfirmationEmail } = require("../utils/emailService");
-const { getSchedulesById, getScheduleRealtimeAvailability } = require("../services/classesScheduleService");
+const {
+  getSchedulesById,
+  getScheduleRealtimeAvailability,
+} = require("../services/classesScheduleService");
 const activityLogService = require("../services/activityLogService");
 const cacheUtil = require("../utils/cacheUtility");
-
 
 const { BOOKING_STATUS } = require("../models/Enums");
 
@@ -39,7 +42,9 @@ const _validateBooking = (bookingData, performedByUser) => {
 
   // 1. Trainer ต้องเป็น Private Class เท่านั้น
   if (trainer && !is_private) {
-    const error = new Error("Trainer สามารถเลือกได้เฉพาะคลาสส่วนตัว (Private) เท่านั้น");
+    const error = new Error(
+      "Trainer สามารถเลือกได้เฉพาะคลาสส่วนตัว (Private) เท่านั้น",
+    );
     error.status = 400;
     throw error;
   }
@@ -60,17 +65,30 @@ const _validateBooking = (bookingData, performedByUser) => {
 /**
  * ตรวจสอบที่ว่างในคลาส (Check Availability)
  */
-const _checkAvailability = async (classesScheduleId, transaction, previousQty, requestedSeats, bookingDate) => {
-  const { 
-    maxCapacity, 
-    currentBookingCount, 
-    isCloseGym, 
-    isClassClosed, 
-    closuresReason 
-  } = await getScheduleRealtimeAvailability(classesScheduleId, bookingDate, { transaction, lock: true });
+const _checkAvailability = async (
+  classesScheduleId,
+  transaction,
+  previousQty,
+  requestedSeats,
+  bookingDate,
+) => {
+  const {
+    maxCapacity,
+    currentBookingCount,
+    isCloseGym,
+    isClassClosed,
+    closuresReason,
+  } = await getScheduleRealtimeAvailability(classesScheduleId, bookingDate, {
+    transaction,
+    lock: true,
+  });
 
   if (isCloseGym || isClassClosed) {
-    const error = new Error(closuresReason === "Gym Closed" ? "ยิมปิดให้บริการในวันที่เลือก" : "คลาสนี้นี้ปิดให้บริการในวันที่เลือก");
+    const error = new Error(
+      closuresReason === "Gym Closed"
+        ? "ยิมปิดให้บริการในวันที่เลือก"
+        : "คลาสนี้นี้ปิดให้บริการในวันที่เลือก",
+    );
     error.status = 409;
     throw error;
   }
@@ -81,7 +99,9 @@ const _checkAvailability = async (classesScheduleId, transaction, previousQty, r
 
   if (totalAfterBooking > maxCapacity) {
     const remainingSeats = Math.max(0, maxCapacity - seatsTakenByOthers);
-    const error = new Error(`ที่นั่งไม่พอ: เหลือเพียง ${remainingSeats} ที่นั่ง (คุณต้องการ ${requestedSeats})`);
+    const error = new Error(
+      `ที่นั่งไม่พอ: เหลือเพียง ${remainingSeats} ที่นั่ง (คุณต้องการ ${requestedSeats})`,
+    );
     error.status = 409;
     throw error;
   }
@@ -90,13 +110,25 @@ const _checkAvailability = async (classesScheduleId, transaction, previousQty, r
 /**
  * ส่งอีเมลยืนยันการจอง/เปลี่ยนแปลง/ยกเลิก
  */
-const sendEmailBookingConfirmation = async (clientEmail, clientName, isPrivate, dateBooking, booking, scheduleId, type, capacity) => {
+const sendEmailBookingConfirmation = async (
+  clientEmail,
+  clientName,
+  isPrivate,
+  dateBooking,
+  booking,
+  scheduleId,
+  type,
+  capacity,
+) => {
   if (!clientEmail) return;
 
   const schedule = await getSchedulesById(scheduleId);
   if (!schedule) return;
 
-  const gymName = schedule.gym_enum === "STING_HIVE" ? "Sting Hive Muay Thai Gym" : "Sting Club Muay Thai Gym";
+  const gymName =
+    schedule.gym_enum === "STING_HIVE"
+      ? "Sting Hive Muay Thai Gym"
+      : "Sting Club Muay Thai Gym";
   const baseUrl = (process.env.FRONT_END_URL || "").replace(/\/$/, "");
 
   let templateFile = "booking-confirmation-email.html";
@@ -132,7 +164,7 @@ const sendEmailBookingConfirmation = async (clientEmail, clientName, isPrivate, 
       "{{location}}": gymName,
     };
 
-    Object.keys(replacements).forEach(key => {
+    Object.keys(replacements).forEach((key) => {
       html = html.split(key).join(replacements[key]);
     });
 
@@ -171,7 +203,13 @@ const createBooking = async (bookingData, performedByUser = null) => {
 
   try {
     // 2. ตรวจสอบที่นั่งว่าง (Lock แถวเพื่อกัน Race Condition)
-    await _checkAvailability(classes_schedule_id, transaction, 0, capacity, normalizedBookingDate);
+    await _checkAvailability(
+      classes_schedule_id,
+      transaction,
+      0,
+      capacity,
+      normalizedBookingDate,
+    );
 
     // 3. ดึงข้อมูลตารางเรียน
     const schedule = await getSchedulesById(classes_schedule_id);
@@ -192,22 +230,35 @@ const createBooking = async (bookingData, performedByUser = null) => {
         capacity,
         is_private: is_private || false,
         date_booking: normalizedBookingDate,
-        created_by: performedByUser?.name || performedByUser?.username || client_name || "CLIENT_APP",
+        created_by:
+          performedByUser?.name ||
+          performedByUser?.username ||
+          client_name ||
+          "CLIENT_APP",
         gyms_id: schedule.gyms_id,
         gyms_enum: schedule.gym_enum,
         trainer: trainer || "",
         multipleStudents: multiple_students || false,
       },
-      { transaction }
+      { transaction },
     );
 
     // 5. บันทึก Log
     await activityLogService.createLog({
       user_id: performedByUser?.id || null,
-      user_name: performedByUser?.name || performedByUser?.username || client_name || "CLIENT_APP",
+      user_name:
+        performedByUser?.name ||
+        performedByUser?.username ||
+        client_name ||
+        "CLIENT_APP",
       service: "BOOKING",
       action: "CREATE",
-      details: { booking_id: newBooking.id, client_name, date_booking: normalizedBookingDate, capacity },
+      details: {
+        booking_id: newBooking.id,
+        client_name,
+        date_booking: normalizedBookingDate,
+        capacity,
+      },
     });
 
     await transaction.commit();
@@ -231,7 +282,7 @@ const createBooking = async (bookingData, performedByUser = null) => {
         newBooking,
         classes_schedule_id,
         "N",
-        capacity
+        capacity,
       );
     }
   }
@@ -269,15 +320,17 @@ const updateBooking = async (bookingId, updateData, performedByUser = null) => {
     }
 
     // 3. ถ้ามีการเปลี่ยนคลาสหรือวันที่ หรือเพิ่มจำนวนคน → ต้องเช็คที่นั่งใหม่
-    const isSameSlot = dayjs(date_booking).isSame(dayjs(booking.date_booking), "day") && classes_schedule_id === booking.classes_schedule_id;
-    
+    const isSameSlot =
+      dayjs(date_booking).isSame(dayjs(booking.date_booking), "day") &&
+      classes_schedule_id === booking.classes_schedule_id;
+
     if (capacity !== booking.capacity || !isSameSlot) {
       await _checkAvailability(
-        classes_schedule_id, 
-        transaction, 
-        isSameSlot ? booking.capacity : 0, 
-        capacity, 
-        normalizedBookingDate
+        classes_schedule_id,
+        transaction,
+        isSameSlot ? booking.capacity : 0,
+        capacity,
+        normalizedBookingDate,
       );
     }
 
@@ -304,19 +357,35 @@ const updateBooking = async (bookingId, updateData, performedByUser = null) => {
         gyms_enum: schedule.gym_enum,
         trainer: trainer || "",
         multipleStudents: multiple_students || false,
-        updated_by: performedByUser?.name || performedByUser?.username || client_name || "CLIENT_APP",
+        updated_by:
+          performedByUser?.name ||
+          performedByUser?.username ||
+          client_name ||
+          "CLIENT_APP",
         updated_date: new Date(),
       },
-      { transaction }
+      { transaction },
     );
 
     // 5. บันทึก Log
     await activityLogService.createLog({
       user_id: performedByUser?.id || null,
-      user_name: performedByUser?.name || performedByUser?.username || client_name || "CLIENT_APP",
+      user_name:
+        performedByUser?.name ||
+        performedByUser?.username ||
+        client_name ||
+        "CLIENT_APP",
       service: "BOOKING",
       action: "UPDATE",
-      details: { booking_id: booking.id, old_values: oldValues, new_values: { classes_schedule_id, capacity, date_booking: normalizedBookingDate } },
+      details: {
+        booking_id: booking.id,
+        old_values: oldValues,
+        new_values: {
+          classes_schedule_id,
+          capacity,
+          date_booking: normalizedBookingDate,
+        },
+      },
     });
 
     await transaction.commit();
@@ -340,7 +409,7 @@ const updateBooking = async (bookingId, updateData, performedByUser = null) => {
         updatedBooking,
         updatedBooking.classes_schedule_id,
         "Y",
-        capacity
+        capacity,
       );
     }
   }
@@ -433,26 +502,45 @@ const updateBookingStatus = async (bookingId, newStatus, user) => {
     const noSeatStatuses = ["CANCELED", "FAILED"];
 
     // ถ้าเดิมไม่มีที่นั่ง (เช่น ยกเลิกไปแล้ว) แล้วต้องการกู้คืนกลับมา → ต้องเช็คที่ว่างใหม่
-    if (noSeatStatuses.includes(oldStatus) && needSeatStatuses.includes(newStatus)) {
-      await _checkAvailability(booking.classes_schedule_id, transaction, 0, booking.capacity, booking.date_booking);
+    if (
+      noSeatStatuses.includes(oldStatus) &&
+      needSeatStatuses.includes(newStatus)
+    ) {
+      await _checkAvailability(
+        booking.classes_schedule_id,
+        transaction,
+        0,
+        booking.capacity,
+        booking.date_booking,
+      );
     }
 
     updatedBooking = await booking.update(
       {
         booking_status: newStatus,
-        updated_by: user?.name || user?.username || (typeof user === 'string' ? user : "ADMIN"),
+        updated_by:
+          user?.name ||
+          user?.username ||
+          (typeof user === "string" ? user : "ADMIN"),
         updated_date: new Date(),
       },
-      { transaction }
+      { transaction },
     );
 
     // บันทึก Log
     await activityLogService.createLog({
       user_id: user?.id || null,
-      user_name: user?.name || user?.username || (typeof user === 'string' ? user : "ADMIN"),
+      user_name:
+        user?.name ||
+        user?.username ||
+        (typeof user === "string" ? user : "ADMIN"),
       service: "BOOKING",
       action: "UPDATE_STATUS",
-      details: { booking_id: bookingId, old_status: oldStatus, new_status: newStatus },
+      details: {
+        booking_id: bookingId,
+        old_status: oldStatus,
+        new_status: newStatus,
+      },
     });
 
     await transaction.commit();
@@ -474,7 +562,7 @@ const updateBookingStatus = async (bookingId, newStatus, user) => {
         updatedBooking.date_booking,
         updatedBooking,
         updatedBooking.classes_schedule_id,
-        "C"  // FLAG CANCEL
+        "C", // FLAG CANCEL
       );
     }
   }
@@ -483,7 +571,11 @@ const updateBookingStatus = async (bookingId, newStatus, user) => {
 /**
  * [UPDATE] อัปเดตเทรนเนอร์ (เฉพาะ Private Class)
  */
-const updateBookingTrainer = async (bookingId, trainer, performedByUser = null) => {
+const updateBookingTrainer = async (
+  bookingId,
+  trainer,
+  performedByUser = null,
+) => {
   try {
     const booking = await ClassesBooking.findByPk(bookingId);
     if (!booking) {
@@ -509,7 +601,11 @@ const updateBookingTrainer = async (bookingId, trainer, performedByUser = null) 
       user_name: performedByUser?.name || performedByUser?.username || "ADMIN",
       service: "BOOKING",
       action: "UPDATE_TRAINER",
-      details: { booking_id: bookingId, old_trainer: oldTrainer, new_trainer: trainer },
+      details: {
+        booking_id: bookingId,
+        old_trainer: oldTrainer,
+        new_trainer: trainer,
+      },
     });
 
     return { success: true, message: "อัปเดตเทรนเนอร์สำเร็จ" };
@@ -522,7 +618,11 @@ const updateBookingTrainer = async (bookingId, trainer, performedByUser = null) 
 /**
  * [UPDATE] อัปเดตสถานะการชำระเงิน
  */
-const updateBookingPayment = async (bookingId, payment_status, performedByUser = null) => {
+const updateBookingPayment = async (
+  bookingId,
+  payment_status,
+  performedByUser = null,
+) => {
   try {
     const booking = await ClassesBooking.findByPk(bookingId);
     if (!booking) {
@@ -546,7 +646,11 @@ const updateBookingPayment = async (bookingId, payment_status, performedByUser =
       user_name: performedByUser?.name || performedByUser?.username || "ADMIN",
       service: "BOOKING",
       action: "UPDATE_PAYMENT",
-      details: { booking_id: bookingId, old_status: oldStatus, new_status: newStatus },
+      details: {
+        booking_id: bookingId,
+        old_status: oldStatus,
+        new_status: newStatus,
+      },
     });
 
     return { success: true, message: "อัปเดตสถานะการชำระเงินสำเร็จ" };
@@ -575,7 +679,7 @@ const getBookingByName = async (name) => {
     const booking = await ClassesBooking.findAll({
       where: sequelize.where(
         sequelize.fn("LOWER", sequelize.col("client_name")),
-        { [Op.like]: `%${name.toLowerCase()}%` }
+        { [Op.like]: `%${name.toLowerCase()}%` },
       ),
       include: [
         {
@@ -594,6 +698,115 @@ const getBookingByName = async (name) => {
   }
 };
 
+const { Parser } = require("json2csv");
+
+/**
+ * [EXPORT] Export Bookings to CSV by date range (filtered by date_booking)
+ */
+const exportBookingsToCSV = async ({ start_date, end_date }) => {
+  if (!start_date || !end_date) {
+    throw new Error("start_date and end_date are required");
+  }
+
+  const startOfRange = dayjs(start_date).startOf("day").toDate();
+  const endOfRange = dayjs(end_date).add(1, "day").startOf("day").toDate();
+
+  try {
+    const rows = await ClassesBooking.findAll({
+      where: {
+        date_booking: {
+          [Op.gte]: startOfRange,
+          [Op.lt]: endOfRange,
+        },
+      },
+      attributes: [
+        "date_booking",
+        "client_name",
+        "client_email",
+        "client_phone",
+        "booking_status",
+        "capacity",
+        "admin_note",
+        "trainer",
+        "created_by",
+        "created_date",
+        "updated_by",
+        "updated_date",
+      ],
+      include: [
+        {
+          model: ClassesSchedule,
+          as: "schedule",
+          attributes: ["start_time", "end_time", "is_private_class"],
+          include: [
+            {
+              model: Gyms, // JOIN gyms via schedule → gyms_id
+              as: "gyms",
+              attributes: ["gym_name"],
+            },
+          ],
+        },
+      ],
+      order: [["date_booking", "ASC"]],
+      raw: false,
+    });
+
+    const data = rows.map((r) => {
+      const b = r.get({ plain: true });
+      return {
+        date_booking: dayjs(b.date_booking).format("YYYY-MM-DD"),
+        client_name: b.client_name ?? "",
+        client_email: b.client_email ?? "",
+        client_phone: b.client_phone ?? "",
+        status: b.booking_status ?? "",
+        capacity: b.capacity ?? "",
+        admin_note: b.admin_note ?? "",
+        trainer: b.trainer ?? "",
+        start_time: b.schedule?.start_time ?? "",
+        end_time: b.schedule?.end_time ?? "",
+        gyms: b.schedule?.gyms?.gym_name ?? "",
+        private: b.schedule?.is_private_class ? "Yes" : "No",
+        created_by: b.created_by ?? "",
+        created_date: b.created_date
+          ? dayjs(b.created_date).format("YYYY-MM-DD HH:mm:ss")
+          : "",
+        updated_by: b.updated_by ?? "",
+        updated_date: b.updated_date
+          ? dayjs(b.updated_date).format("YYYY-MM-DD HH:mm:ss")
+          : "",
+      };
+    });
+
+    const fields = [
+      { label: "Date Booking", value: "date_booking" },
+      { label: "Client Name", value: "client_name" },
+      { label: "Client Email", value: "client_email" },
+      { label: "Client Phone", value: "client_phone" },
+      { label: "Status", value: "status" },
+      { label: "Capacity", value: "capacity" },
+      { label: "Admin Note", value: "admin_note" },
+      { label: "Trainer", value: "trainer" },
+      { label: "Start Time", value: "start_time" },
+      { label: "End Time", value: "end_time" },
+      { label: "Gym", value: "gyms" },
+      { label: "Private Class", value: "private" },
+      { label: "Created By", value: "created_by" },
+      { label: "Created Date", value: "created_date" },
+      { label: "Updated By", value: "updated_by" },
+      { label: "Updated Date", value: "updated_date" },
+    ];
+
+    const parser = new Parser({ fields, withBOM: true });
+    const csv = parser.parse(data);
+    const filename = `bookings_${dayjs(start_date).format("YYYYMMDD")}_${dayjs(end_date).format("YYYYMMDD")}.csv`;
+
+    return { csv, filename };
+  } catch (error) {
+    console.error("[Booking Service] Export CSV Error:", error);
+    throw error;
+  }
+};
+
 module.exports = {
   createBooking,
   updateBooking,
@@ -604,4 +817,5 @@ module.exports = {
   updateBookingPayment,
   getTrainerForRequest,
   getBookingByName,
+  exportBookingsToCSV,
 };

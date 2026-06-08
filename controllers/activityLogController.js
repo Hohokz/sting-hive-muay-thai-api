@@ -20,3 +20,21 @@ exports.getActivityLogs = async (req, res) => {
     });
   }
 };
+
+exports.exportLogsToCSV = async (req, res) => {
+  try {
+    const { csv, filename } = await activityLogService.exportLogsToCSV(
+      req.query,
+    );
+
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.status(200).send(csv);
+  } catch (error) {
+    console.error("[ActivityLogController] exportLogsToCSV Error:", error);
+    res.status(500).json({
+      success: false,
+      message: "ไม่สามารถ export ข้อมูล Activity Log ได้",
+    });
+  }
+};
