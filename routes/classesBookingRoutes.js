@@ -6,6 +6,8 @@ const { extractUserIfPresent } = require("../middlewares/authMiddleware");
 
 // GET /api/v1/bookings?classes_schedule_id=...
 router.get("/", bookingController.getBookings);
+// GET /api/v1/bookings/:name
+router.get("/:name", extractUserIfPresent, bookingController.getBookingByName);
 
 // POST /api/v1/bookings
 router.post("/", extractUserIfPresent, bookingController.createBooking);

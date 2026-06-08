@@ -172,6 +172,7 @@ exports.updateBookingPayment = async (req, res) => {
  */
 exports.getBookings = async (req, res) => {
   try {
+    console.log(req.query);
     const bookings = await classesBookingService.getBookings(req.query);
     res
       .status(200)
@@ -199,6 +200,18 @@ exports.getTrainerForRequest = async (req, res) => {
     res
       .status(500)
       .json({ success: false, message: "เกิดข้อผิดพลาดในการดึงข้อมูลผู้สอน" });
+  }
+};
+
+exports.getBookingByName = async (req, res) => {
+  try {
+    console.log("bookings.name", req.params.name);
+    const booking = await classesBookingService.getBookingByName(
+      req.params.name,
+    );
+    res.status(200).json({ success: true, data: booking });
+  } catch (error) {
+    handleServiceError(res, error);
   }
 };
 
