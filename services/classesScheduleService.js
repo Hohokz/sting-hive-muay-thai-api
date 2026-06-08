@@ -336,17 +336,13 @@ const getAvailableSchedulesByBookingDate = async (
   isPrivateClass,
 ) => {
   try {
-    const { checkTime, startOfDay, endOfDay } = _getDateRange(date);
+    console.log(
+      "--------------- GET AVAILABLE SCHEDULES (SHARED LOGIC) ---------------",
+    );
+    console.log("Input Date:", date);
+    console.log("GymEnum:", gymEnum);
 
-    // 0. ตรวจสอบ Cache ก่อน (เพื่อประหยัด Cost ของ Supabase)
-    const cacheKey = `availability:${date}:${gymEnum || "all"}:${isPrivateClass}`;
-    const cachedData = cacheUtil.get(cacheKey);
-    if (cachedData) {
-      console.log("--- Serving Available Schedules from Cache ---");
-      return cachedData;
-    }
-
-    // 1. ดึงข้อมูลตารางเรียนพื้นฐาน (Schedules + Capacity)
+    // 1. Fetch Base Schedules
     const whereSchedule = {};
     if (gymEnum) whereSchedule.gym_enum = gymEnum;
     if (isPrivateClass !== undefined)
@@ -354,113 +350,61 @@ const getAvailableSchedulesByBookingDate = async (
 
     const schedules = await ClassesSchedule.findAll({
       where: whereSchedule,
-      include: [{ model: ClassesCapacity, as: "capacity_data" }],
       order: [["start_time", "ASC"]],
     });
 
-    if (schedules.length === 0) return [];
+    console.log(`Found ${schedules.length} base schedules.`);
 
-    const scheduleIds = schedules.map((s) => s.id);
-    const gymIds = [...new Set(schedules.map((s) => s.gyms_id))];
+    // 2. Iterate and Calculate Availability using Shared Function
+    const availableSchedules = [];
 
-    // 2. ดึงข้อมูลประกอบแบบ Bulk: การปิดยิม, การตั้งค่าพิเศษ (Advance), และยอดการจอง
-    const [gymClosures, advancedConfigs, bookingCounts] = await Promise.all([
-      // A. ตรวจสอบการปิดยิม (ทั้งยิม)
-      ClassesBookingInAdvance.findAll({
-        where: {
-          gyms_id: { [Op.in]: gymIds },
-          is_close_gym: true,
-          classes_schedule_id: null,
-          start_date: { [Op.lte]: checkTime },
-          end_date: { [Op.gte]: checkTime },
-        },
-      }),
-      // B. ตรวจสอบการตั้งค่าพิเศษรายคลาส (เช่น เปลี่ยนความจุ หรือปิดบางคลาส)
-      ClassesBookingInAdvance.findAll({
-        where: {
-          classes_schedule_id: { [Op.in]: scheduleIds },
-          start_date: { [Op.lte]: checkTime },
-          end_date: { [Op.gte]: checkTime },
-        },
-        order: [["created_date", "DESC"]],
-      }),
-      // C. นับยอดการจองที่เกิดขึ้นแล้ว
-      ClassesBooking.findAll({
-        attributes: [
-          "classes_schedule_id",
-          [Sequelize.fn("SUM", Sequelize.col("capacity")), "total_capacity"],
-        ],
-        where: {
-          classes_schedule_id: { [Op.in]: scheduleIds },
-          date_booking: { [Op.between]: [startOfDay, endOfDay] },
-          booking_status: { [Op.notIn]: ["CANCELED", "FAILED"] },
-        },
-        group: ["classes_schedule_id"],
-      }),
-    ]);
+    for (const schedule of schedules) {
+      // Call Shared Logic
+      // Note: This is N+1 query pattern, but given low N (classes per day), it's acceptable for consistency.
+      const availability = await getScheduleRealtimeAvailability(
+        schedule.id,
+        date,
+      );
 
-    // 3. จัดการข้อมูลให้อยู่ในรูปแบบ Map เพื่อการค้นที่รวดเร็ว (O(1))
-    const gymClosureMap = new Map(gymClosures.map((c) => [c.gyms_id, c]));
-    const advancedConfigMap = new Map();
-    advancedConfigs.forEach((config) => {
-      if (!advancedConfigMap.has(config.classes_schedule_id)) {
-        advancedConfigMap.set(config.classes_schedule_id, config);
+      // If Gym/Class is closed, we might still want to show it as "Closed" or filter it out.
+      // Based on previous logic, we skip if closed by gym-wide rule.
+
+      if (availability.isCloseGym) {
+        console.log(`[Skip] Gym Closed for Schedule ${schedule.id}`);
+        continue;
       }
-    });
-    const bookingCountMap = new Map(
-      bookingCounts.map((b) => [
-        b.classes_schedule_id,
-        parseInt(b.get("total_capacity") || 0, 10),
-      ]),
-    );
 
-    // 4. ผสมข้อมูลเพื่อสร้างผลลัพธ์สุดท้าย
-    const availableSchedules = schedules
-      .filter((schedule) => !gymClosureMap.has(schedule.gyms_id)) // กรองยิมที่ปิดออก
-      .map((schedule) => {
-        const advConfig = advancedConfigMap.get(schedule.id);
-        const currentBookingCount = bookingCountMap.get(schedule.id) || 0;
+      availableSchedules.push({
+        id: schedule.id,
+        start_time: schedule.start_time,
+        end_time: schedule.end_time,
+        gym_enum: schedule.gym_enum,
+        gyms_id: schedule.gyms_id,
+        capacity_data: {
+          id: schedule.capacity_data?.id, // Note: might need to fetch if not included in shared
+          capacity: availability.maxCapacity,
+        },
+        booking_count: availability.currentBookingCount,
+        available_seats: availability.availableSeats,
+        is_full: availability.availableSeats <= 0,
+      });
 
-        let maxCapacity = schedule.capacity_data?.capacity || 0;
-        let isClassClosed = false;
-
-        // ถ้ามีการตั้งค่า Advance (เช่น ปรับลดคน หรือ ปิดคลาสเฉพาะกิจ) ให้ใช้ค่านั้นแทน
-        if (advConfig) {
-          if (advConfig.is_close_gym) {
-            isClassClosed = true;
-            maxCapacity = 0;
-          } else {
-            maxCapacity = advConfig.capacity;
-          }
-        }
-
-        const availableSeats = Math.max(0, maxCapacity - currentBookingCount);
-
-        return {
-          id: schedule.id,
-          start_time: schedule.start_time,
-          end_time: schedule.end_time,
-          gym_enum: schedule.gym_enum,
-          gyms_id: schedule.gyms_id,
-          capacity_data: {
-            id: schedule.capacity_data?.id,
-            capacity: maxCapacity,
-          },
-          booking_count: currentBookingCount,
-          available_seats: availableSeats,
-          is_full: availableSeats <= 0,
-          is_class_closed: isClassClosed,
-        };
-      })
-      .filter((s) => !s.is_class_closed); // กรองคลาสที่สั่งปิดรายวันออก
-
-    // เก็บเข้า Cache 20 วินาที (ลดภาระ DB เมื่อมีคนรุมเข้าดูพร้อมกัน)
-    cacheUtil.set(cacheKey, availableSchedules, 20000);
+      console.log(
+        `[${schedule.gym_enum} ${schedule.start_time}-${schedule.end_time} (${
+          schedule.is_private_class ? "Private" : "Group"
+        })] ID: ${schedule.id} | Max: ${availability.maxCapacity} | Booked: ${
+          availability.currentBookingCount
+        } | Avail: ${availability.availableSeats}`,
+      );
+    }
 
     return availableSchedules;
   } catch (error) {
-    console.error("[Service Error] getAvailableSchedulesByBookingDate:", error);
-    throw new Error("ไม่สามารถดึงข้อมูลตารางเรียนที่ว่างได้");
+    console.error(
+      "[SUPABASE DB ERROR] getAvailableSchedulesByBookingDate:",
+      error,
+    );
+    throw error;
   }
 };
 
