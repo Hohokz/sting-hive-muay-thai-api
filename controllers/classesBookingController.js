@@ -11,7 +11,7 @@ exports.createBooking = async (req, res) => {
     res.status(201).json({
       success: true,
       message: "สร้างการจองสำเร็จแล้ว",
-      data: result.data,
+      data: result,
     });
   } catch (error) {
     console.error("[BookingController] createBooking Error:", error);
@@ -34,7 +34,7 @@ exports.updateBooking = async (req, res) => {
     res.status(200).json({
       success: true,
       message: "อัปเดตการจองสำเร็จแล้ว",
-      data: result.data,
+      data: result,
     });
   } catch (error) {
     console.error("[BookingController] updateBooking Error:", error);
@@ -59,7 +59,7 @@ exports.updateBookingStatus = async (req, res) => {
     res.status(200).json({
       success: true,
       message: "อัปเดตสถานะการจองสำเร็จ",
-      data: result.data,
+      data: result,
     });
   } catch (error) {
     console.error("[BookingController] updateBookingStatus Error:", error);

@@ -34,6 +34,7 @@ const getTrainersByGym = async (gymId, options = {}) => {
       const bookings = await ClassesBooking.findAll({
         where: {
           classes_schedule_id: options.classes_schedule_id, 
+          booking_status: { [Op.ne]: "CANCELED" },
           date_booking: { [Op.between]: [startOfDay, endOfDay] }
         }
       });

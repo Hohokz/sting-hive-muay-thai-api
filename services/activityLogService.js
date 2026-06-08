@@ -1,4 +1,6 @@
 const { ActivityLog, User, ClassesSchedule, ClassesCapacity } = require("../models/Associations");
+const { Op } = require("sequelize");
+const dayjs = require("dayjs");
 
 /**
  * [CREATE] สร้าง Activity Log ใหม่
@@ -16,12 +18,19 @@ const createLog = async (data) => {
  * [READ] ดึงรายการ Activity Log (พร้อมเติมข้อมูล Schedule ถ้ามี)
  */
 const getActivityLogs = async (filters = {}) => {
-  const { service, action, user_id, limit = 50, offset = 0 } = filters;
+  const { service, action, user_id, limit = 50, offset = 0, date } = filters;
   const whereCondition = {};
 
   if (service) whereCondition.service = service;
   if (action) whereCondition.action = action;
   if (user_id) whereCondition.user_id = user_id;
+  if (date) {
+    const startOfDay = dayjs(date).startOf("day").toDate();
+    const endOfDay = dayjs(date).endOf("day").toDate();
+    whereCondition.created_at = {
+      [Op.between]: [startOfDay, endOfDay],
+    };
+  }
 
   try {
     const { count, rows } = await ActivityLog.findAndCountAll({

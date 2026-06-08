@@ -72,5 +72,25 @@ describe('ActivityLogService', () => {
       expect(result.total).toBe(1);
       expect(result.logs[0].details.schedule_details).toBeDefined();
     });
+
+    test('should apply date filter when date query is provided', async () => {
+      const mockLog = {
+        id: 2,
+        get: jest.fn().mockReturnValue({ id: 2 })
+      };
+
+      ActivityLog.findAndCountAll.mockResolvedValue({
+        count: 1,
+        rows: [mockLog]
+      });
+
+      await activityLogService.getActivityLogs({ date: '2026-06-02' });
+
+      expect(ActivityLog.findAndCountAll).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({
+          created_at: expect.any(Object)
+        })
+      }));
+    });
   });
 });
