@@ -58,8 +58,10 @@ exports.updateBooking = async (req, res) => {
 exports.updateBookingStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const { booking_status } = req.body;
+    const booking_status = "CANCELED";
     const performedByUser = req.user;
+
+    console.log(id, booking_status, performedByUser);
 
     const result = await classesBookingService.updateBookingStatus(
       id,

@@ -488,6 +488,7 @@ const getBookings = async (filters) => {
 const updateBookingStatus = async (bookingId, newStatus, user) => {
   const transaction = await sequelize.transaction();
   let updatedBooking = null;
+  console.log("hi");
 
   try {
     const booking = await ClassesBooking.findByPk(bookingId, { transaction });
