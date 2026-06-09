@@ -145,7 +145,7 @@ exports.updateBookingTrainer = async (req, res) => {
 exports.updateBookingPayment = async (req, res) => {
   try {
     const { id } = req.params;
-    const { payment_status } = req.body;
+    const payment_status = req.body.is_paid;
     const performedByUser = req.user;
 
     const result = await classesBookingService.updateBookingPayment(
