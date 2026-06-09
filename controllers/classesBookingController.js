@@ -89,7 +89,7 @@ exports.updateBookingStatus = async (req, res) => {
 exports.updateBookingNote = async (req, res) => {
   try {
     const { id } = req.params;
-    const { note } = req.body;
+    const { note }  = req.body;
     const performedByUser = req.user;
 
     const result = await classesBookingService.updateBookingNote(
@@ -117,7 +117,7 @@ exports.updateBookingNote = async (req, res) => {
 exports.updateBookingTrainer = async (req, res) => {
   try {
     const { id } = req.params;
-    const { trainer } = req.body;
+    const trainer  = req.body.trainer_name;
     const performedByUser = req.user;
 
     const result = await classesBookingService.updateBookingTrainer(
