@@ -205,11 +205,15 @@ exports.getTrainerForRequest = async (req, res) => {
 
 exports.getBookingByName = async (req, res) => {
   try {
+    if (req.params.name.toLowerCase() === "trainers") {
+      const trainer = await classesBookingService.getTrainerForRequest(req, res);
+      return res.status(200).json({ success: true, data: trainer });
+    }
     console.log("bookings.name", req.params.name);
     const booking = await classesBookingService.getBookingByName(
       req.params.name,
     );
-    res.status(200).json({ success: true, data: booking });
+    return res.status(200).json({ success: true, data: booking });
   } catch (error) {
     handleServiceError(res, error);
   }
