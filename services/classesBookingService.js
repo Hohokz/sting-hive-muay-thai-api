@@ -195,6 +195,13 @@ const createBooking = async (bookingData, performedByUser = null) => {
     multiple_students,
   } = bookingData;
 
+  // ดัก payload ถ้า client_email หรือ client_name ว่าง
+  if (!client_email || !client_email.trim() || !client_name || !client_name.trim()) {
+    const error = new Error("กรุณากรอกชื่อและอีเมลให้ครบถ้วน");
+    error.status = 400;
+    throw error;
+  }
+
   // 1. ตรวจสอบเงื่อนไขการจอง
   const normalizedBookingDate = _validateBooking(bookingData, performedByUser);
 
