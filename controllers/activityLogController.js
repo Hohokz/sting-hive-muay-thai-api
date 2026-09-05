@@ -18,16 +18,17 @@ exports.getActivityLogs = async (req, res) => {
   }
 };
 
-exports.exportLogsToCSV = async (req, res) => {
+// Defaults to Excel (.xlsx); pass ?format=csv for the CSV export instead.
+exports.exportLogs = async (req, res) => {
   try {
-    const { csv, filename } = await activityLogService.exportLogsToCSV(
+    const { data, filename, contentType } = await activityLogService.exportLogs(
       req.query,
       req.user,
     );
 
-    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Type", contentType);
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-    res.status(200).send(csv);
+    res.status(200).send(data);
   } catch (error) {
     sendError(res, error, "ไม่สามารถ export ข้อมูล Activity Log ได้");
   }

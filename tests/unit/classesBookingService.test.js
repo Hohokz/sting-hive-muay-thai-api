@@ -44,6 +44,12 @@ jest.mock('../../services/classesScheduleService', () => ({
 jest.mock('../../services/activityLogService', () => ({ createLog: jest.fn() }));
 jest.mock('../../utils/cacheUtility', () => ({ clearByPrefix: jest.fn() }));
 jest.mock('fs', () => ({
+  // Spread the real module first — the exceljs dependency chain (via the
+  // `tmp` package) uses several other fs members (constants, rmdirSync,
+  // ...) at require time, and this mock only needs to fake
+  // existsSync/readFileSync for the email template logic this test
+  // actually exercises.
+  ...jest.requireActual('fs'),
   existsSync: jest.fn().mockReturnValue(true),
   readFileSync: jest.fn().mockReturnValue('<html>{{client_name}}</html>')
 }));

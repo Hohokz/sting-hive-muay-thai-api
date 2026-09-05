@@ -775,9 +775,121 @@ const getBookingByName = async (name) => {
 };
 
 const { Parser } = require("json2csv");
+const ExcelJS = require("exceljs");
+
+const BOOKING_EXPORT_FIELDS = [
+  { label: "Date Booking", value: "date_booking" },
+  { label: "Client Name", value: "client_name" },
+  { label: "Client Email", value: "client_email" },
+  { label: "Client Phone", value: "client_phone" },
+  { label: "Status", value: "status" },
+  { label: "Capacity", value: "capacity" },
+  { label: "Admin Note", value: "admin_note" },
+  { label: "Trainer", value: "trainer" },
+  { label: "Start Time", value: "start_time" },
+  { label: "End Time", value: "end_time" },
+  { label: "Gym", value: "gyms" },
+  { label: "Private Class", value: "private" },
+  { label: "Created By", value: "created_by" },
+  { label: "Created Date", value: "created_date" },
+  { label: "Updated By", value: "updated_by" },
+  { label: "Updated Date", value: "updated_date" },
+];
+
+/**
+ * Fetches and shapes bookings for export — shared between the CSV and Excel
+ * output paths so the query and column set can't drift between formats.
+ */
+const _fetchBookingsForExport = async (start_date, end_date) => {
+  // Anchored in UTC, not local time, to match how getAvailableExportMonths
+  // (TO_CHAR against Postgres's UTC session timezone) buckets rows by month —
+  // otherwise this range is shifted by the local UTC offset and silently
+  // drops/includes rows near the boundary of the selected range.
+  const startOfRange = dayjs.utc(start_date).startOf("day").toDate();
+  const endOfRange = dayjs.utc(end_date).add(1, "day").startOf("day").toDate();
+
+  const rows = await ClassesBooking.findAll({
+    where: {
+      date_booking: {
+        [Op.gte]: startOfRange,
+        [Op.lt]: endOfRange,
+      },
+    },
+    attributes: [
+      "date_booking",
+      "client_name",
+      "client_email",
+      "client_phone",
+      "booking_status",
+      "capacity",
+      "admin_note",
+      "trainer",
+      "created_by",
+      "created_date",
+      "updated_by",
+      "updated_date",
+    ],
+    include: [
+      {
+        model: ClassesSchedule,
+        as: "schedule",
+        attributes: ["start_time", "end_time", "is_private_class"],
+        include: [
+          {
+            model: Gyms, // JOIN gyms via schedule → gyms_id
+            as: "gyms",
+            attributes: ["gym_name"],
+          },
+        ],
+      },
+    ],
+    order: [["date_booking", "ASC"]],
+    raw: false,
+  });
+
+  return rows.map((r) => {
+    const b = r.get({ plain: true });
+    return {
+      date_booking: dayjs(b.date_booking).format("YYYY-MM-DD"),
+      client_name: b.client_name ?? "",
+      client_email: b.client_email ?? "",
+      client_phone: b.client_phone ?? "",
+      status: b.booking_status ?? "",
+      capacity: b.capacity ?? "",
+      admin_note: b.admin_note ?? "",
+      trainer: b.trainer ?? "",
+      start_time: b.schedule?.start_time ?? "",
+      end_time: b.schedule?.end_time ?? "",
+      gyms: b.schedule?.gyms?.gym_name ?? "",
+      private: b.schedule?.is_private_class ? "Yes" : "No",
+      created_by: b.created_by ?? "",
+      created_date: b.created_date
+        ? dayjs(b.created_date).format("YYYY-MM-DD HH:mm:ss")
+        : "",
+      updated_by: b.updated_by ?? "",
+      updated_date: b.updated_date
+        ? dayjs(b.updated_date).format("YYYY-MM-DD HH:mm:ss")
+        : "",
+    };
+  });
+};
+
+const _logBookingsExported = async (start_date, end_date, performedByUser) => {
+  // Recorded so a purge can later require "this month was exported first"
+  // (see hasExportBeenLogged) — not just an audit trail entry.
+  await activityLogService.createLog({
+    user_id: performedByUser?.id || null,
+    user_name: performedByUser?.name || performedByUser?.username || "ADMIN",
+    service: "BOOKING",
+    action: EXPORT_LOG_ACTION,
+    details: { start_date, end_date },
+  });
+};
 
 /**
  * [EXPORT] Exports bookings to CSV, filtered by date range (date_booking).
+ * Kept available alongside the Excel export below — the frontend defaults to
+ * Excel, but this remains callable (e.g. `?format=csv`).
  */
 const exportBookingsToCSV = async ({ start_date, end_date }, performedByUser = null) => {
   if (!start_date || !end_date) {
@@ -786,117 +898,67 @@ const exportBookingsToCSV = async ({ start_date, end_date }, performedByUser = n
     throw error;
   }
 
-  // Anchored in UTC, not local time, to match how getAvailableExportMonths
-  // (TO_CHAR against Postgres's UTC session timezone) buckets rows by month —
-  // otherwise this range is shifted by the local UTC offset and silently
-  // drops/includes rows near the boundary of the selected range.
-  const startOfRange = dayjs.utc(start_date).startOf("day").toDate();
-  const endOfRange = dayjs.utc(end_date).add(1, "day").startOf("day").toDate();
-
   try {
-    const rows = await ClassesBooking.findAll({
-      where: {
-        date_booking: {
-          [Op.gte]: startOfRange,
-          [Op.lt]: endOfRange,
-        },
-      },
-      attributes: [
-        "date_booking",
-        "client_name",
-        "client_email",
-        "client_phone",
-        "booking_status",
-        "capacity",
-        "admin_note",
-        "trainer",
-        "created_by",
-        "created_date",
-        "updated_by",
-        "updated_date",
-      ],
-      include: [
-        {
-          model: ClassesSchedule,
-          as: "schedule",
-          attributes: ["start_time", "end_time", "is_private_class"],
-          include: [
-            {
-              model: Gyms, // JOIN gyms via schedule → gyms_id
-              as: "gyms",
-              attributes: ["gym_name"],
-            },
-          ],
-        },
-      ],
-      order: [["date_booking", "ASC"]],
-      raw: false,
-    });
+    const data = await _fetchBookingsForExport(start_date, end_date);
 
-    const data = rows.map((r) => {
-      const b = r.get({ plain: true });
-      return {
-        date_booking: dayjs(b.date_booking).format("YYYY-MM-DD"),
-        client_name: b.client_name ?? "",
-        client_email: b.client_email ?? "",
-        client_phone: b.client_phone ?? "",
-        status: b.booking_status ?? "",
-        capacity: b.capacity ?? "",
-        admin_note: b.admin_note ?? "",
-        trainer: b.trainer ?? "",
-        start_time: b.schedule?.start_time ?? "",
-        end_time: b.schedule?.end_time ?? "",
-        gyms: b.schedule?.gyms?.gym_name ?? "",
-        private: b.schedule?.is_private_class ? "Yes" : "No",
-        created_by: b.created_by ?? "",
-        created_date: b.created_date
-          ? dayjs(b.created_date).format("YYYY-MM-DD HH:mm:ss")
-          : "",
-        updated_by: b.updated_by ?? "",
-        updated_date: b.updated_date
-          ? dayjs(b.updated_date).format("YYYY-MM-DD HH:mm:ss")
-          : "",
-      };
-    });
-
-    const fields = [
-      { label: "Date Booking", value: "date_booking" },
-      { label: "Client Name", value: "client_name" },
-      { label: "Client Email", value: "client_email" },
-      { label: "Client Phone", value: "client_phone" },
-      { label: "Status", value: "status" },
-      { label: "Capacity", value: "capacity" },
-      { label: "Admin Note", value: "admin_note" },
-      { label: "Trainer", value: "trainer" },
-      { label: "Start Time", value: "start_time" },
-      { label: "End Time", value: "end_time" },
-      { label: "Gym", value: "gyms" },
-      { label: "Private Class", value: "private" },
-      { label: "Created By", value: "created_by" },
-      { label: "Created Date", value: "created_date" },
-      { label: "Updated By", value: "updated_by" },
-      { label: "Updated Date", value: "updated_date" },
-    ];
-
-    const parser = new Parser({ fields, withBOM: true });
+    const parser = new Parser({ fields: BOOKING_EXPORT_FIELDS, withBOM: true });
     const csv = parser.parse(data);
     const filename = `bookings_${dayjs(start_date).format("YYYYMMDD")}_${dayjs(end_date).format("YYYYMMDD")}.csv`;
 
-    // Recorded so a purge can later require "this month was exported first"
-    // (see hasMonthBeenExported) — not just an audit trail entry.
-    await activityLogService.createLog({
-      user_id: performedByUser?.id || null,
-      user_name: performedByUser?.name || performedByUser?.username || "ADMIN",
-      service: "BOOKING",
-      action: EXPORT_LOG_ACTION,
-      details: { start_date, end_date },
-    });
+    await _logBookingsExported(start_date, end_date, performedByUser);
 
-    return { csv, filename };
+    return { data: csv, filename, contentType: "text/csv; charset=utf-8" };
   } catch (error) {
     console.error("[Booking Service] Export CSV Error:", error);
     throw error;
   }
+};
+
+/**
+ * [EXPORT] Exports bookings to an .xlsx workbook, filtered by date range.
+ * This is the default export format used by the frontend.
+ */
+const exportBookingsToExcel = async ({ start_date, end_date }, performedByUser = null) => {
+  if (!start_date || !end_date) {
+    const error = new Error("start_date and end_date are required");
+    error.status = 400;
+    throw error;
+  }
+
+  try {
+    const data = await _fetchBookingsForExport(start_date, end_date);
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Bookings");
+    sheet.columns = BOOKING_EXPORT_FIELDS.map((f) => ({ header: f.label, key: f.value, width: 18 }));
+    sheet.getRow(1).font = { bold: true };
+    sheet.addRows(data);
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const filename = `bookings_${dayjs(start_date).format("YYYYMMDD")}_${dayjs(end_date).format("YYYYMMDD")}.xlsx`;
+
+    await _logBookingsExported(start_date, end_date, performedByUser);
+
+    return {
+      data: buffer,
+      filename,
+      contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    };
+  } catch (error) {
+    console.error("[Booking Service] Export Excel Error:", error);
+    throw error;
+  }
+};
+
+/**
+ * [EXPORT] Single entry point the controller calls — dispatches to Excel
+ * (the default) or CSV based on `format`.
+ */
+const exportBookings = async ({ start_date, end_date, format }, performedByUser = null) => {
+  if (format === "csv") {
+    return exportBookingsToCSV({ start_date, end_date }, performedByUser);
+  }
+  return exportBookingsToExcel({ start_date, end_date }, performedByUser);
 };
 
 /**
@@ -1002,7 +1064,9 @@ module.exports = {
   updateBookingPayment,
   getTrainerForRequest,
   getBookingByName,
+  exportBookings,
   exportBookingsToCSV,
+  exportBookingsToExcel,
   getAvailableExportMonths,
   getExportedMonths,
   previewPurgeBookingsByMonth,

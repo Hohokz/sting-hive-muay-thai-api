@@ -21,7 +21,7 @@ router.get(
   "/export",
   authenticateToken,
   authorizeRole(["ADMIN"]),
-  bookingController.exportBookingsToCSV,
+  bookingController.exportBookings,
 );
 // GET /api/v1/bookings/export/months — which months have data, for the export UI
 router.get(

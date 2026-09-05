@@ -122,8 +122,81 @@ const getActivityLogs = async (filters = {}) => {
   }
 };
 
+const ExcelJS = require("exceljs");
+
+const LOG_EXPORT_FIELDS = [
+  { label: "ID", value: "id" },
+  { label: "User ID", value: "user_id" },
+  { label: "User Name", value: "user_name" },
+  { label: "Service", value: "service" },
+  { label: "Action", value: "action" },
+  { label: "Details", value: "details" },
+  { label: "IP Address", value: "ip_address" },
+  { label: "Created At", value: "created_at" },
+];
+
 /**
- * [EXPORT] Exports activity logs to CSV, filtered by date range.
+ * Fetches and shapes activity logs for export — shared between the CSV and
+ * Excel output paths so the query and column set can't drift between formats.
+ */
+const _fetchLogsForExport = async (start_date, end_date) => {
+  // Anchored in UTC, not local time — see getAvailableExportMonths, which
+  // buckets rows by TO_CHAR(created_at, ...) under Postgres's UTC session
+  // timezone. Using local time here would shift the boundary and silently
+  // drop/include rows near the edge of the selected range.
+  const startOfRange = dayjs.utc(start_date).startOf("day").toDate();
+  const endOfRange = dayjs.utc(end_date).add(1, "day").startOf("day").toDate();
+
+  const rows = await ActivityLog.findAll({
+    where: {
+      created_at: {
+        [Op.gte]: startOfRange,
+        [Op.lt]: endOfRange,
+      },
+    },
+    // No JOIN needed — user_name is a direct column on activity_logs
+    attributes: [
+      "id",
+      "user_id",
+      "user_name",
+      "service",
+      "action",
+      "details",
+      "ip_address",
+      "created_at",
+    ],
+    order: [["created_at", "ASC"]],
+    raw: true, // raw: true is enough since no associations needed
+  });
+
+  return rows.map((log) => ({
+    id: log.id,
+    user_id: log.user_id ?? "",
+    user_name: log.user_name ?? "",
+    service: log.service ?? "",
+    action: log.action ?? "",
+    details: log.details ? JSON.stringify(log.details) : "",
+    ip_address: log.ip_address ?? "",
+    created_at: dayjs(log.created_at).format("YYYY-MM-DD HH:mm:ss"),
+  }));
+};
+
+const _logLogsExported = async (start_date, end_date, performedByUser) => {
+  // Recorded so a purge can later require "this month was exported first"
+  // (see hasExportBeenLogged) — not just an audit trail entry.
+  await createLog({
+    user_id: performedByUser?.id || null,
+    user_name: performedByUser?.name || performedByUser?.username || "ADMIN",
+    service: EXPORT_LOG_SERVICE,
+    action: EXPORT_LOG_ACTION,
+    details: { start_date, end_date },
+  });
+};
+
+/**
+ * [EXPORT] Exports activity logs to CSV, filtered by date range. Kept
+ * available alongside the Excel export below — the frontend defaults to
+ * Excel, but this remains callable (e.g. `?format=csv`).
  */
 const exportLogsToCSV = async ({ start_date, end_date }, performedByUser = null) => {
   if (!start_date || !end_date) {
@@ -132,78 +205,67 @@ const exportLogsToCSV = async ({ start_date, end_date }, performedByUser = null)
     throw error;
   }
 
-  // Anchored in UTC, not local time — see getAvailableExportMonths, which
-  // buckets rows by TO_CHAR(created_at, ...) under Postgres's UTC session
-  // timezone. Using local time here would shift the boundary and silently
-  // drop/include rows near the edge of the selected range.
-  const startOfRange = dayjs.utc(start_date).startOf("day").toDate();
-  const endOfRange = dayjs.utc(end_date).add(1, "day").startOf("day").toDate();
-
   try {
-    const rows = await ActivityLog.findAll({
-      where: {
-        created_at: {
-          [Op.gte]: startOfRange,
-          [Op.lt]: endOfRange,
-        },
-      },
-      // No JOIN needed — user_name is a direct column on activity_logs
-      attributes: [
-        "id",
-        "user_id",
-        "user_name",
-        "service",
-        "action",
-        "details",
-        "ip_address",
-        "created_at",
-      ],
-      order: [["created_at", "ASC"]],
-      raw: true, // raw: true is enough since no associations needed
-    });
+    const data = await _fetchLogsForExport(start_date, end_date);
 
-    const data = rows.map((log) => ({
-      id: log.id,
-      user_id: log.user_id ?? "",
-      user_name: log.user_name ?? "",
-      service: log.service ?? "",
-      action: log.action ?? "",
-      details: log.details ? JSON.stringify(log.details) : "",
-      ip_address: log.ip_address ?? "",
-      created_at: dayjs(log.created_at).format("YYYY-MM-DD HH:mm:ss"),
-    }));
-
-    const fields = [
-      { label: "ID", value: "id" },
-      { label: "User ID", value: "user_id" },
-      { label: "User Name", value: "user_name" },
-      { label: "Service", value: "service" },
-      { label: "Action", value: "action" },
-      { label: "Details", value: "details" },
-      { label: "IP Address", value: "ip_address" },
-      { label: "Created At", value: "created_at" },
-    ];
-
-    const parser = new Parser({ fields, withBOM: true });
+    const parser = new Parser({ fields: LOG_EXPORT_FIELDS, withBOM: true });
     const csv = parser.parse(data);
-
     const filename = `activity_logs_${dayjs(start_date).format("YYYYMMDD")}_${dayjs(end_date).format("YYYYMMDD")}.csv`;
 
-    // Recorded so a purge can later require "this month was exported first"
-    // (see hasMonthBeenExported) — not just an audit trail entry.
-    await createLog({
-      user_id: performedByUser?.id || null,
-      user_name: performedByUser?.name || performedByUser?.username || "ADMIN",
-      service: EXPORT_LOG_SERVICE,
-      action: EXPORT_LOG_ACTION,
-      details: { start_date, end_date },
-    });
+    await _logLogsExported(start_date, end_date, performedByUser);
 
-    return { csv, filename };
+    return { data: csv, filename, contentType: "text/csv; charset=utf-8" };
   } catch (error) {
     console.error("[ActivityLogService] Export CSV Error:", error);
     throw error;
   }
+};
+
+/**
+ * [EXPORT] Exports activity logs to an .xlsx workbook, filtered by date
+ * range. This is the default export format used by the frontend.
+ */
+const exportLogsToExcel = async ({ start_date, end_date }, performedByUser = null) => {
+  if (!start_date || !end_date) {
+    const error = new Error("start_date and end_date are required");
+    error.status = 400;
+    throw error;
+  }
+
+  try {
+    const data = await _fetchLogsForExport(start_date, end_date);
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Activity Logs");
+    sheet.columns = LOG_EXPORT_FIELDS.map((f) => ({ header: f.label, key: f.value, width: 20 }));
+    sheet.getRow(1).font = { bold: true };
+    sheet.addRows(data);
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const filename = `activity_logs_${dayjs(start_date).format("YYYYMMDD")}_${dayjs(end_date).format("YYYYMMDD")}.xlsx`;
+
+    await _logLogsExported(start_date, end_date, performedByUser);
+
+    return {
+      data: buffer,
+      filename,
+      contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    };
+  } catch (error) {
+    console.error("[ActivityLogService] Export Excel Error:", error);
+    throw error;
+  }
+};
+
+/**
+ * [EXPORT] Single entry point the controller calls — dispatches to Excel
+ * (the default) or CSV based on `format`.
+ */
+const exportLogs = async ({ start_date, end_date, format }, performedByUser = null) => {
+  if (format === "csv") {
+    return exportLogsToCSV({ start_date, end_date }, performedByUser);
+  }
+  return exportLogsToExcel({ start_date, end_date }, performedByUser);
 };
 
 /**
@@ -328,7 +390,9 @@ const purgeLogsByMonth = async (month, performedByUser = null) => {
 module.exports = {
   createLog,
   getActivityLogs,
+  exportLogs,
   exportLogsToCSV,
+  exportLogsToExcel,
   getAvailableExportMonths,
   getExportedMonths,
   previewPurgeLogsByMonth,

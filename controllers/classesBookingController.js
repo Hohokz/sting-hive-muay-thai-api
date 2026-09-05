@@ -183,17 +183,18 @@ exports.getBookingByName = async (req, res) => {
   }
 };
 
-exports.exportBookingsToCSV = async (req, res) => {
+// Defaults to Excel (.xlsx); pass ?format=csv for the CSV export instead.
+exports.exportBookings = async (req, res) => {
   try {
-    const { csv, filename } = await classesBookingService.exportBookingsToCSV(
+    const { data, filename, contentType } = await classesBookingService.exportBookings(
       req.query,
       req.user,
     );
 
-    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Type", contentType);
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
 
-    res.send(csv);
+    res.send(data);
   } catch (error) {
     sendError(res, error, "เกิดข้อผิดพลาดในการส่งออกข้อมูล");
   }
