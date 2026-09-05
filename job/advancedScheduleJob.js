@@ -1,40 +1,40 @@
 const cron = require("node-cron");
 const { Op, Sequelize } = require("sequelize");
-const { 
-  ClassesSchedule, 
-  ClassesCapacity, 
-  ClassesBookingInAdvance 
+const {
+  ClassesSchedule,
+  ClassesCapacity,
+  ClassesBookingInAdvance
 } = require("../models/Associations");
 
 /**
- * [CRON JOB] ระบบจัดการตารางเรียนล่วงหน้า
- * - เปิด/ปิดตารางเรียนตาม Config (เช่น ปิดยิมวันหยุด)
- * - ปรับเปลี่ยน Capacity ตามช่วงเวลาที่กำหนด
+ * [CRON JOB] Manages advance schedule configs.
+ * - Opens/closes schedules per config (e.g. closing a gym for a holiday)
+ * - Adjusts capacity for the configured date range
  */
 const startAdvancedScheduleJob = () => {
-  // รันทุกวันเวลา 00:01 น. เพื่อเตรียมข้อมูลสำหรับวันนั้นๆ
+  // Runs daily at 00:01 to prepare that day's data
   cron.schedule("01 00 * * *", async () => {
-    console.log("[AdvancedJob] ⏰ เริ่มทำงานระบบตารางเรียนล่วงหน้า...");
+    console.log("[AdvancedJob] ⏰ Starting advance-schedule job...");
     await runAdvancedScheduleJob();
   });
 };
 
 const runAdvancedScheduleJob = async () => {
   const now = new Date();
-  const todayStr = now.toISOString().split("T")[0]; // รูปแบบ YYYY-MM-DD
-  
+  const todayStr = now.toISOString().split("T")[0]; // YYYY-MM-DD
+
   const yesterday = new Date(now);
   yesterday.setDate(yesterday.getDate() - 1);
   const yesterdayStr = yesterday.toISOString().split("T")[0];
 
-  console.log(`[AdvancedJob] 📅 วันนี้: ${todayStr} | เมื่อวาน: ${yesterdayStr}`);
+  console.log(`[AdvancedJob] 📅 Today: ${todayStr} | Yesterday: ${yesterdayStr}`);
 
   try {
     // -----------------------------------------------------------------
-    // 1. ตรวจสอบ Config ที่เริ่มมีผล "วันนี้"
+    // 1. Check configs that take effect "today"
     // -----------------------------------------------------------------
 
-    // ค้นหาคำสั่งปิดยิม (is_close_gym = true)
+    // Gym closures (is_close_gym = true)
     const activeClosures = await ClassesBookingInAdvance.findAll({
       where: {
         is_close_gym: true,
@@ -46,7 +46,7 @@ const runAdvancedScheduleJob = async () => {
       },
     });
 
-    // ค้นหาคำสั่งปรับ Capacity (ส่วนตัวรายบุคคล)
+    // Per-schedule capacity adjustments
     const activeCapacities = await ClassesBookingInAdvance.findAll({
       where: {
         is_close_gym: false,
@@ -59,7 +59,7 @@ const runAdvancedScheduleJob = async () => {
       },
     });
 
-    // --- Action: ปิดตารางเรียน (is_active = false) ---
+    // --- Action: close schedules (is_active = false) ---
     let closedCount = 0;
     for (const closure of activeClosures) {
       const [updated] = await ClassesSchedule.update(
@@ -69,7 +69,7 @@ const runAdvancedScheduleJob = async () => {
       if (updated) closedCount += updated;
     }
 
-    // --- Action: ปรับ Capacity ---
+    // --- Action: apply capacity adjustments ---
     let capUpdatedCount = 0;
     for (const config of activeCapacities) {
       const [updated] = await ClassesCapacity.update(
@@ -80,10 +80,10 @@ const runAdvancedScheduleJob = async () => {
     }
 
     // -----------------------------------------------------------------
-    // 2. ตรวจสอบ Config ที่ "หมดอายุ" เมื่อวาน (ต้องคืนค่าเดิม)
+    // 2. Check configs that expired "yesterday" (need to be reverted)
     // -----------------------------------------------------------------
 
-    // ค้นหาคำสั่งปิดยิมที่เพิ่งหมดเขต
+    // Gym closures that just ended
     const expiredClosures = await ClassesBookingInAdvance.findAll({
       where: {
         is_close_gym: true,
@@ -94,11 +94,12 @@ const runAdvancedScheduleJob = async () => {
       },
     });
 
-    // ค้นหาคำสั่งปรับ Capacity ที่เพิ่งหมดเขต
+    // Capacity adjustments that just ended
     const expiredCapacities = await ClassesBookingInAdvance.findAll({
       where: {
         is_close_gym: false,
         classes_schedule_id: { [Op.not]: null },
+        // TODO(tech-debt): column name has a typo ("capasity"); renaming needs a migration.
         old_capasity: { [Op.not]: null },
         [Op.and]: [
           Sequelize.where(Sequelize.fn("DATE", Sequelize.col("end_date")), "=", yesterdayStr),
@@ -106,10 +107,10 @@ const runAdvancedScheduleJob = async () => {
       },
     });
 
-    // --- Action: เปิดตารางเรียนคืน (Reactivate) ---
+    // --- Action: reopen schedules ---
     let reopenedCount = 0;
     for (const closure of expiredClosures) {
-      // เช็คว่ามี Config อื่นที่สั่งปิดยิมนี้อยู่ซ้อนกันหรือไม่
+      // Skip reopening if another closure for this gym is still active
       const stillActive = await ClassesBookingInAdvance.count({
         where: {
           gyms_id: closure.gyms_id,
@@ -130,10 +131,10 @@ const runAdvancedScheduleJob = async () => {
       }
     }
 
-    // --- Action: คืนค่า Capacity เดิม ---
+    // --- Action: restore the original capacity ---
     let capRevertedCount = 0;
     for (const config of expiredCapacities) {
-      // เช็คว่ามี Config อื่นที่ปรับค่าตารางนี้ซ้อนกันหรือไม่
+      // Skip reverting if another config for this schedule is still active
       const stillActive = await ClassesBookingInAdvance.count({
         where: {
           classes_schedule_id: config.classes_schedule_id,
@@ -154,16 +155,16 @@ const runAdvancedScheduleJob = async () => {
       }
     }
 
-    // --- รายงานผลการทำงาน ---
-    console.log("[AdvancedJob] 📊 สรุปการทำงาน:");
-    console.log(`  - 🔴 ปิดยิม/ตาราง (วันนี้): ${closedCount} รายการ`);
-    console.log(`  - ⚖️ ปรับ Capacity (วันนี้): ${capUpdatedCount} รายการ`);
-    console.log(`  - 🟢 เปิดยิมคืน (หมดอายุ): ${reopenedCount} รายการ`);
-    console.log(`  - 🔄 คืนค่า Capacity (หมดอายุ): ${capRevertedCount} รายการ`);
+    // --- Summary ---
+    console.log("[AdvancedJob] 📊 Summary:");
+    console.log(`  - 🔴 Closed gyms/schedules (today): ${closedCount}`);
+    console.log(`  - ⚖️ Capacity adjustments (today): ${capUpdatedCount}`);
+    console.log(`  - 🟢 Reopened gyms (expired): ${reopenedCount}`);
+    console.log(`  - 🔄 Capacity reverted (expired): ${capRevertedCount}`);
     console.log("-------------------------------------------\n");
 
   } catch (error) {
-    console.error("[AdvancedJob] ❌ เกิดข้อผิดพลาด:", error);
+    console.error("[AdvancedJob] ❌ Error:", error);
   }
 };
 

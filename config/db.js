@@ -27,13 +27,23 @@ const connectDB = async () => {
     await sequelize.authenticate();
     console.log("✅ Database connection successful.");
 
+    // NOTE: intentionally not calling `sequelize.sync({ alter: true })` here.
+    // It used to run on every dev-mode restart and, over months of repeated
+    // restarts against this same shared database, silently piled up over
+    // 2,200 duplicate unique constraints on users.email/username and
+    // classes_booking.payment_id (Sequelize's alter-diffing didn't recognize
+    // the existing constraint as satisfying the model each time) — which had
+    // made every INSERT/UPDATE on those tables ~100x slower than it should
+    // be, since Postgres must maintain every one of those indexes on every
+    // write. Plain `sync()` (no alter) only creates tables that don't exist
+    // yet — safe for a fresh local setup — and never touches existing ones.
     if (process.env.NODE_ENV !== "production") {
-      await sequelize.sync({ alter: true });
-      console.log("✅ Database synced (Dev Mode)");
+      await sequelize.sync();
+      console.log("✅ Database synced (Dev Mode, no alter)");
     }
   } catch (error) {
     console.error("❌ DB Error:", error);
-    process.exit(1); // ✅ ถ้า DB พัง ให้ server ตายทันที
+    process.exit(1); // Fail fast: if the DB can't connect, the server shouldn't stay up
   }
 };
 

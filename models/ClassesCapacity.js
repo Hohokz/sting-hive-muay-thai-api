@@ -1,6 +1,10 @@
 const { DataTypes } = require('sequelize');
-const { sequelize } = require('../config/db');
 
+// TODO(tech-debt): this model is defined as a factory function (`(sequelize) => ...`)
+// instead of the direct `sequelize.define(...)` pattern every other model uses,
+// and its tableName is upper-case ('CLASSES_CAPACITY') unlike every sibling table
+// ('classes_booking', 'classes_schedule', ...). Left as-is: Associations.js already
+// depends on this factory shape, and renaming the table needs a migration.
 const ClassesCapacity = (sequelize) => {
     const model = sequelize.define('CLASSES_CAPACITY', {
         id: {
@@ -9,20 +13,19 @@ const ClassesCapacity = (sequelize) => {
             primaryKey: true,
             allowNull: false
         },
-        // Foreign Key ที่อ้างอิงถึง CLASSES_SCHEDULE.id
-        classes_id: { 
+        // Foreign key referencing CLASSES_SCHEDULE.id
+        classes_id: {
             type: DataTypes.UUID,
             allowNull: false,
-            // ไม่ต้องใส่ unique: true เพราะ ClassesSchedule.hasOne จะบังคับความสัมพันธ์ 1:1 เอง
+            // No unique: true needed — ClassesSchedule.hasOne already enforces the 1:1 relationship.
         },
         capacity: {
             type: DataTypes.INTEGER,
             allowNull: false,
-            defaultValue: 1 // ความจุเริ่มต้น
+            defaultValue: 1 // default capacity
         },
-        // สามารถเพิ่มข้อมูลอื่น ๆ ที่เกี่ยวข้องกับ Capacity ได้ที่นี่
-        
-        // Audit Fields
+
+        // Audit fields
         created_by: {
             type: DataTypes.STRING,
             allowNull: true,

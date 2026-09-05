@@ -1,7 +1,8 @@
 const trainerGymService = require("../services/trainerGymService");
+const { sendError } = require("../utils/httpError");
 
 /**
- * [GET] ดึงรายชื่อเทรนเนอร์ที่สังกัดยิมนั้นๆ
+ * [GET] Returns trainers assigned to a gym
  */
 const getTrainersByGym = async (req, res) => {
   try {
@@ -10,26 +11,24 @@ const getTrainersByGym = async (req, res) => {
     const trainers = await trainerGymService.getTrainersByGym(gymId, { date, classes_schedule_id });
     res.status(200).json({ success: true, data: trainers });
   } catch (error) {
-    console.error("[TrainerGymController] getTrainers Error:", error);
-    res.status(500).json({ success: false, message: error.message });
+    sendError(res, error, "เกิดข้อผิดพลาดในการดึงข้อมูลเทรนเนอร์");
   }
 };
 
 /**
- * [GET] ดึงรายชื่อผู้ใช้ที่สามารถเป็นเทรนเนอร์ได้
+ * [GET] Returns users eligible to be a trainer
  */
 const getAvailableUsersForTrainer = async (req, res) => {
   try {
     const users = await trainerGymService.getAvailableUsersForTrainer();
     res.status(200).json({ success: true, data: users });
   } catch (error) {
-    console.error("[TrainerGymController] getAvailableUsers Error:", error);
-    res.status(500).json({ success: false, message: error.message });
+    sendError(res, error, "เกิดข้อผิดพลาดในการดึงข้อมูลผู้ใช้ที่สามารถเป็นเทรนเนอร์ได้");
   }
 };
 
 /**
- * [POST] มอบหมายเทรนเนอร์ให้ยิม
+ * [POST] Assigns a trainer to a gym
  */
 const assignTrainerToGym = async (req, res) => {
   try {
@@ -37,13 +36,12 @@ const assignTrainerToGym = async (req, res) => {
     const result = await trainerGymService.assignTrainerToGym(userId, gymId, req.user);
     res.status(201).json({ success: true, message: "เพิ่มเทรนเนอร์เข้ายิมสำเร็จ", data: result });
   } catch (error) {
-    console.error("[TrainerGymController] assign Error:", error);
-    res.status(400).json({ success: false, message: error.message });
+    sendError(res, error, "ไม่สามารถเพิ่มเทรนเนอร์เข้ายิมได้");
   }
 };
 
 /**
- * [POST] ลบเทรนเนอร์ออกจากยิม
+ * [POST] Removes a trainer from a gym
  */
 const removeTrainerFromGym = async (req, res) => {
   try {
@@ -51,8 +49,7 @@ const removeTrainerFromGym = async (req, res) => {
     const result = await trainerGymService.removeTrainerFromGym(userId, gymId, req.user);
     res.status(200).json({ success: true, message: "ลบเทรนเนอร์ออกจากยิมสำเร็จ", data: result });
   } catch (error) {
-    console.error("[TrainerGymController] remove Error:", error);
-    res.status(400).json({ success: false, message: error.message });
+    sendError(res, error, "ไม่สามารถลบเทรนเนอร์ออกจากยิมได้");
   }
 };
 

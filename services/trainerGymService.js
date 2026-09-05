@@ -2,10 +2,11 @@ const { User, Gyms, TrainerGyms, ClassesBooking } = require("../models/Associati
 const { Op } = require("sequelize");
 const activityLogService = require("./activityLogService");
 const dayjs = require("dayjs");
+const { BOOKING_STATUS, USER_ROLE } = require("../models/Enums");
 
 /**
- * [READ] ดึงรายชื่อเทรนเนอร์ที่ผูกกับยิมที่เลือก (และตรวจสอบคิวว่างถ้ามีการระบุวันที่/คลาส)
- * @param {number} gymId 
+ * [READ] Returns the trainers linked to a gym (optionally filtering out ones already booked).
+ * @param {number} gymId
  * @param {object} options { date, classes_schedule_id }
  */
 const getTrainersByGym = async (gymId, options = {}) => {
@@ -21,28 +22,35 @@ const getTrainersByGym = async (gymId, options = {}) => {
       ],
     });
 
-    if (!gym) throw new Error("ไม่พบข้อมูลยิมที่ระบุ");
+    if (!gym) {
+      const error = new Error("ไม่พบข้อมูลยิมที่ระบุ");
+      error.status = 404;
+      throw error;
+    }
 
     let trainers = gym.trainers;
 
-    // --- ถ้ามีการระบุวันที่และตารางเรียน ให้คัดกรองเทรนเนอร์ที่ติดสอนออก ---
+    // If a date and schedule are given, filter out trainers already busy then
     if (options.date && options.classes_schedule_id) {
       const startOfDay = dayjs(options.date).startOf("day").toDate();
       const endOfDay = dayjs(options.date).endOf("day").toDate();
 
-      // ดึงการจองที่มีการระบุเทรนเนอร์ในวันนั้นและคลาสนั้น
+      // Bookings that named a trainer for that class on that day
       const bookings = await ClassesBooking.findAll({
         where: {
-          classes_schedule_id: options.classes_schedule_id, 
-          booking_status: { [Op.ne]: "CANCELED" },
+          classes_schedule_id: options.classes_schedule_id,
+          booking_status: { [Op.ne]: BOOKING_STATUS.CANCELED },
           date_booking: { [Op.between]: [startOfDay, endOfDay] }
         }
       });
 
       if (bookings.length > 0) {
+        // TODO(tech-debt): matches by trainer display name, not a trainer_id
+        // FK — ClassesBooking.trainer is free text. Two trainers sharing a
+        // name would incorrectly be treated as the same person. Fixing this
+        // properly needs a trainer_id column + migration.
         const busyTrainerNames = bookings.map(b => b.trainer).filter(Boolean);
-        
-        // คัดออก: เทรนเนอร์ที่ชื่ออยู่ในรายการ busy
+
         trainers = trainers.filter(t => !busyTrainerNames.includes(t.name));
       }
     }
@@ -55,12 +63,12 @@ const getTrainersByGym = async (gymId, options = {}) => {
 };
 
 /**
- * [READ] ดึงรายชื่อ User ทั้งหมดที่มีสิทธิ์เป็นเทรนเนอร์ (Role: USER)
+ * [READ] Returns all users eligible to be a trainer (role: USER).
  */
 const getAvailableUsersForTrainer = async () => {
   try {
     const users = await User.findAll({
-      where: { role: "USER" },
+      where: { role: USER_ROLE.USER },
       attributes: ["id", "username", "name", "email", "role"],
       order: [["name", "ASC"]],
     });
@@ -72,26 +80,28 @@ const getAvailableUsersForTrainer = async () => {
 };
 
 /**
- * [CREATE] ผูกเทรนเนอร์เข้ากับยิม (Assign)
+ * [CREATE] Assigns a trainer to a gym.
  */
 const assignTrainerToGym = async (userId, gymId, performedByUser = null) => {
   try {
-    // 1. ตรวจสอบว่ามีการผูกไว้อยู่แล้วหรือไม่
+    // 1. Reject a duplicate assignment
     const existing = await TrainerGyms.findOne({
       where: { user_id: userId, gyms_id: gymId },
     });
 
     if (existing) {
-      throw new Error("เทรนเนอร์ท่านนี้ถูกเพิ่มเข้ายิมนี้อยู่แล้ว");
+      const error = new Error("เทรนเนอร์ท่านนี้ถูกเพิ่มเข้ายิมนี้อยู่แล้ว");
+      error.status = 409;
+      throw error;
     }
 
-    // 2. บันทึกความสัมพันธ์
+    // 2. Persist the relationship
     const record = await TrainerGyms.create({
       user_id: userId,
       gyms_id: gymId,
     });
 
-    // 3. บันทึก Log แบบขนาน
+    // 3. Fetch details for logging, in parallel
     const [user, gym] = await Promise.all([
       User.findByPk(userId),
       Gyms.findByPk(gymId)
@@ -118,7 +128,7 @@ const assignTrainerToGym = async (userId, gymId, performedByUser = null) => {
 };
 
 /**
- * [DELETE] ยกเลิกการผูกเทรนเนอร์ออกจากยิม (Unassign)
+ * [DELETE] Unassigns a trainer from a gym.
  */
 const removeTrainerFromGym = async (userId, gymId, performedByUser = null) => {
   try {
@@ -132,10 +142,11 @@ const removeTrainerFromGym = async (userId, gymId, performedByUser = null) => {
     });
 
     if (deletedCount === 0) {
-      throw new Error("ไม่พบความสัมพันธ์ที่ต้องการลบ");
+      const error = new Error("ไม่พบความสัมพันธ์ที่ต้องการลบ");
+      error.status = 404;
+      throw error;
     }
 
-    // บันทึก Log
     await activityLogService.createLog({
       user_id: performedByUser?.id || null,
       user_name: performedByUser?.name || performedByUser?.username || "ADMIN",

@@ -1,6 +1,6 @@
 /**
- * ยูทิลิตี้สำหรับจัดการ Cache ในหน่วยความจำ (In-memory Cache)
- * ช่วยลดการดึงข้อมูลจาก Database โดยตรง เพื่อประหยัด Cost และเพิ่มความเร็ว
+ * In-memory cache utility.
+ * Reduces direct database reads to save cost and improve latency.
  */
 class CacheUtility {
   constructor() {
@@ -8,10 +8,10 @@ class CacheUtility {
   }
 
   /**
-   * บันทึกข้อมูลลง Cache
-   * @param {string} key - คีย์สำหรับอ้างอิงข้อมูล
-   * @param {any} value - ข้อมูลที่ต้องการเก็บ
-   * @param {number} ttl - อายุของข้อมูล (มิลลิวินาที), ค่าเริ่มต้นคือ 1 นาที
+   * Stores a value in the cache.
+   * @param {string} key
+   * @param {any} value
+   * @param {number} ttl - time to live in milliseconds, default 1 minute
    */
   set(key, value, ttl = 60000) {
     const expiry = Date.now() + ttl;
@@ -19,15 +19,14 @@ class CacheUtility {
   }
 
   /**
-   * ดึงข้อมูลจาก Cache
-   * @param {string} key - คีย์ที่ต้องการค้นหา
-   * @returns {any|null} - ข้อมูลที่เก็บไว้ หรือ null ถ้าข้อมูลไม่มี/หมดอายุ
+   * Reads a value from the cache.
+   * @param {string} key
+   * @returns {any|null} the stored value, or null if missing/expired
    */
   get(key) {
     const data = this.cache.get(key);
     if (!data) return null;
 
-    // ตรวจสอบว่าข้อมูลหมดอายุหรือยัง
     if (Date.now() > data.expiry) {
       this.cache.delete(key);
       return null;
@@ -37,16 +36,16 @@ class CacheUtility {
   }
 
   /**
-   * ลบข้อมูลราย Key
-   * @param {string} key 
+   * Deletes a single key.
+   * @param {string} key
    */
   del(key) {
     this.cache.delete(key);
   }
 
   /**
-   * ลบข้อมูลทั้งหมดที่มี Key ขึ้นต้นด้วยคำที่ระบุ (เช่น 'schedules:')
-   * @param {string} prefix 
+   * Deletes every key starting with the given prefix (e.g. 'schedules:').
+   * @param {string} prefix
    */
   clearByPrefix(prefix) {
     for (const key of this.cache.keys()) {
@@ -57,12 +56,12 @@ class CacheUtility {
   }
 
   /**
-   * ล้างข้อมูลใน Cache ทั้งหมด
+   * Clears the entire cache.
    */
   flushAll() {
     this.cache.clear();
   }
 }
 
-// Export เป็น Singleton Instance เพื่อให้ใช้ตัวแปรเดียวกันทั้งโปรเจค
+// Exported as a singleton instance so the whole project shares one cache.
 module.exports = new CacheUtility();

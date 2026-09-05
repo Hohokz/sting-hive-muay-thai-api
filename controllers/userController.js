@@ -1,7 +1,8 @@
 const userService = require("../services/userService");
+const { sendError } = require("../utils/httpError");
 
 /**
- * [GET] ดึงรายชื่อผู้ใช้ทั้งหมด
+ * [GET] Returns all users
  */
 exports.getUsers = async (req, res) => {
   try {
@@ -11,17 +12,12 @@ exports.getUsers = async (req, res) => {
       data: users,
     });
   } catch (error) {
-    console.error("[UserController] getUsers Error:", error);
-    res.status(500).json({
-      success: false,
-      message: "ไม่สามารถดึงข้อมูลผู้ใช้ได้",
-      error: error.message,
-    });
+    sendError(res, error, "ไม่สามารถดึงข้อมูลผู้ใช้ได้");
   }
 };
 
 /**
- * [GET] ดึงรายชื่อเฉพาะผู้ใช้ทั่วไป (เทรนเนอร์/สมาชิก)
+ * [GET] Returns only general users (trainers/members)
  */
 exports.getAllJustUsers = async (req, res) => {
   try {
@@ -31,17 +27,12 @@ exports.getAllJustUsers = async (req, res) => {
       data: users,
     });
   } catch (error) {
-    console.error("[UserController] getAllJustUsers Error:", error);
-    res.status(500).json({
-      success: false,
-      message: "ไม่สามารถดึงข้อมูลรายชื่อเทรนเนอร์/สมาชิกได้",
-      error: error.message,
-    });
+    sendError(res, error, "ไม่สามารถดึงข้อมูลรายชื่อเทรนเนอร์/สมาชิกได้");
   }
 };
 
 /**
- * [GET] ดึงข้อมูลผู้ใช้รายบุคคลตาม ID
+ * [GET] Returns a single user by ID
  */
 exports.getUser = async (req, res) => {
   try {
@@ -53,24 +44,12 @@ exports.getUser = async (req, res) => {
       data: user,
     });
   } catch (error) {
-    console.error("[UserController] getUser Error:", error);
-
-    if (error.status === 404) {
-      return res.status(404).json({
-        success: false,
-        message: error.message,
-      });
-    }
-
-    res.status(500).json({
-      success: false,
-      message: "เกิดข้อผิดพลาดในการดึงข้อมูลผู้ใช้",
-    });
+    sendError(res, error, "เกิดข้อผิดพลาดในการดึงข้อมูลผู้ใช้");
   }
 };
 
 /**
- * [POST] สร้างผู้ใช้ใหม่
+ * [POST] Creates a new user
  */
 exports.createUser = async (req, res) => {
   try {
@@ -92,25 +71,12 @@ exports.createUser = async (req, res) => {
       data: newUser,
     });
   } catch (error) {
-    console.error("[UserController] createUser Error:", error);
-
-    // เช็คกรณีข้อมูลซ้ำ (Unique Constraint)
-    if (error.message.includes("ถูกใช้งานไปแล้ว")) {
-      return res.status(409).json({
-        success: false,
-        message: error.message,
-      });
-    }
-
-    res.status(500).json({
-      success: false,
-      message: "ไม่สามารถสร้างผู้ใช้ได้",
-    });
+    sendError(res, error, "ไม่สามารถสร้างผู้ใช้ได้");
   }
 };
 
 /**
- * [PUT] อัปเดตข้อมูลผู้ใช้
+ * [PUT] Updates a user
  */
 exports.updateUser = async (req, res) => {
   try {
@@ -125,31 +91,12 @@ exports.updateUser = async (req, res) => {
       data: updatedUser,
     });
   } catch (error) {
-    console.error("[UserController] updateUser Error:", error);
-
-    if (error.status === 404) {
-      return res.status(404).json({
-        success: false,
-        message: error.message,
-      });
-    }
-
-    if (error.message.includes("ถูกใช้งานไปแล้ว")) {
-      return res.status(409).json({
-        success: false,
-        message: error.message,
-      });
-    }
-
-    res.status(500).json({
-      success: false,
-      message: "ไม่สามารถอัปเดตข้อมูลผู้ใช้ได้",
-    });
+    sendError(res, error, "ไม่สามารถอัปเดตข้อมูลผู้ใช้ได้");
   }
 };
 
 /**
- * [DELETE] ลบผู้ใช้
+ * [DELETE] Deletes a user
  */
 exports.deleteUser = async (req, res) => {
   try {
@@ -161,18 +108,6 @@ exports.deleteUser = async (req, res) => {
       message: result.message,
     });
   } catch (error) {
-    console.error("[UserController] deleteUser Error:", error);
-
-    if (error.status === 404) {
-      return res.status(404).json({
-        success: false,
-        message: error.message,
-      });
-    }
-
-    res.status(500).json({
-      success: false,
-      message: "ไม่สามารถลบผู้ใช้ได้",
-    });
+    sendError(res, error, "ไม่สามารถลบผู้ใช้ได้");
   }
 };

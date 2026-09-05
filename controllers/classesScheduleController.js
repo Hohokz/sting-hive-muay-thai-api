@@ -1,35 +1,31 @@
 const classesScheduleService = require("../services/classesScheduleService");
+const { sendError } = require("../utils/httpError");
 
 /**
- * [GET] ดึงตารางเรียนทั้งหมด
+ * [GET] Returns all schedules
  */
 exports.getSchedules = async (req, res) => {
   try {
-    const { gym_enum } = req.query;
-    const schedules = await classesScheduleService.getSchedules(gym_enum);
+    const schedules = await classesScheduleService.getSchedules();
     res.json({ success: true, data: schedules });
   } catch (error) {
-    console.error("[ScheduleController] getSchedules Error:", error);
-    res
-      .status(500)
-      .json({ success: false, message: "ไม่สามารถดึงตารางเรียนได้" });
+    sendError(res, error, "ไม่สามารถดึงตารางเรียนได้");
   }
 };
 
 /**
- * [GET] ตรวจสอบคลาสว่างตามวันที่เลือก
+ * [GET] Checks class availability for a given date
  */
 exports.getAvailableSchedulesByBookingDate = async (req, res) => {
   try {
     const { date, gym_enum, is_private_class } = req.query;
-    console.log("req.query", req.query);
     if (!date) {
       return res
         .status(400)
         .json({ success: false, message: "กรุณาระบุวันที่ (date)" });
     }
 
-    // แปลง String เป็น Boolean ตั้งแต่ตรงนี้เลยจะช่วยลดโอกาสเกิด Bug ได้ดีที่สุดครับ
+    // Normalize to a real boolean (or undefined) as early as possible
     const isPrivateBool =
       is_private_class === "true"
         ? true
@@ -41,66 +37,60 @@ exports.getAvailableSchedulesByBookingDate = async (req, res) => {
       await classesScheduleService.getAvailableSchedulesByBookingDate(
         date,
         gym_enum,
-        isPrivateBool, // ส่งค่าที่เป็น Boolean แท้ๆ หรือ undefined เข้าไป
+        isPrivateBool,
       );
     res.json({ success: true, data: availableSchedules });
   } catch (error) {
-    console.error("[ScheduleController] getAvailableByDate Error:", error);
-    res
-      .status(500)
-      .json({ success: false, message: "ไม่สามารถตรวจสอบคลาสว่างได้" });
+    sendError(res, error, "ไม่สามารถตรวจสอบคลาสว่างได้");
   }
 };
 
 /**
- * [POST] สร้างตารางเรียนใหม่
+ * [POST] Creates a new schedule
  */
 exports.createSchedule = async (req, res) => {
   try {
-    const result = await classesScheduleService.createSchedule(req.body);
+    const result = await classesScheduleService.createSchedule(req.body, req.user);
     res
       .status(201)
       .json({ success: true, message: "สร้างตารางเรียนสำเร็จ", data: result });
   } catch (error) {
-    console.error("[ScheduleController] createSchedule Error:", error);
-    res.status(400).json({ success: false, message: error.message });
+    sendError(res, error, "ไม่สามารถสร้างตารางเรียนได้");
   }
 };
 
 /**
- * [PUT] อัปเดตตารางเรียน
+ * [PUT] Updates a schedule
  */
 exports.updateSchedule = async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await classesScheduleService.updateSchedule(id, req.body);
+    const result = await classesScheduleService.updateSchedule(id, req.body, req.user);
     res.json({
       success: true,
       message: "อัปเดตตารางเรียนสำเร็จ",
       data: result,
     });
   } catch (error) {
-    console.error("[ScheduleController] updateSchedule Error:", error);
-    res.status(400).json({ success: false, message: error.message });
+    sendError(res, error, "ไม่สามารถอัปเดตตารางเรียนได้");
   }
 };
 
 /**
- * [DELETE] ลบตารางเรียน
+ * [DELETE] Deletes a schedule
  */
 exports.deleteSchedule = async (req, res) => {
   try {
     const { id } = req.params;
-    await classesScheduleService.deleteSchedule(id);
+    await classesScheduleService.deleteSchedule(id, req.user);
     res.json({ success: true, message: "ลบตารางเรียนสำเร็จ" });
   } catch (error) {
-    console.error("[ScheduleController] deleteSchedule Error:", error);
-    res.status(400).json({ success: false, message: error.message });
+    sendError(res, error, "ไม่สามารถลบตารางเรียนได้");
   }
 };
 
 /**
- * [GET] ตรวจสอบสถานะ Capacity แบบ Real-time (สำหรับหน้า Dashboard/Admin)
+ * [GET] Checks real-time capacity status (for the dashboard/admin view)
  */
 exports.getScheduleRealtimeAvailability = async (req, res) => {
   try {
@@ -118,33 +108,26 @@ exports.getScheduleRealtimeAvailability = async (req, res) => {
       );
     res.json({ success: true, data: availability });
   } catch (error) {
-    console.error("[ScheduleController] getRealtime Error:", error);
-    res
-      .status(500)
-      .json({ success: false, message: "ไม่สามารถดึงข้อมูล Real-time ได้" });
+    sendError(res, error, "ไม่สามารถดึงข้อมูล Real-time ได้");
   }
 };
 
-// --- Advanced Schedule Configurations (การตั้งค่าล่วงหน้า/วันหยุด) ---
+// --- Advanced schedule configurations (advance settings / closures) ---
 
 /**
- * [GET] ดึงรายการการตั้งค่าล่วงหน้าทั้งหมด
+ * [GET] Returns all advance configs
  */
 exports.getAdvancedSchedules = async (req, res) => {
   try {
     const advanced = await classesScheduleService.getAdvancedSchedules();
     res.json({ success: true, data: advanced });
   } catch (error) {
-    console.error("[ScheduleController] getAdvanced Error:", error);
-    res.status(500).json({
-      success: false,
-      message: "ไม่สามารถดึงข้อมูลการตั้งค่าล่วงหน้าได้",
-    });
+    sendError(res, error, "ไม่สามารถดึงข้อมูลการตั้งค่าล่วงหน้าได้");
   }
 };
 
 /**
- * [POST] สร้างการตั้งค่าล่วงหน้าใหม่
+ * [POST] Creates a new advance config
  */
 exports.createAdvancedSchedule = async (req, res) => {
   try {
@@ -159,13 +142,12 @@ exports.createAdvancedSchedule = async (req, res) => {
       data: result,
     });
   } catch (error) {
-    console.error("[ScheduleController] createAdvanced Error:", error);
-    res.status(400).json({ success: false, message: error.message });
+    sendError(res, error, "ไม่สามารถสร้างการตั้งค่าล่วงหน้าได้");
   }
 };
 
 /**
- * [PUT] อัปเดตการตั้งค่าล่วงหน้า
+ * [PUT] Updates an advance config
  */
 exports.updateAdvancedSchedule = async (req, res) => {
   try {
@@ -182,13 +164,12 @@ exports.updateAdvancedSchedule = async (req, res) => {
       data: result,
     });
   } catch (error) {
-    console.error("[ScheduleController] updateAdvanced Error:", error);
-    res.status(400).json({ success: false, message: error.message });
+    sendError(res, error, "ไม่สามารถอัปเดตการตั้งค่าล่วงหน้าได้");
   }
 };
 
 /**
- * [DELETE] ลบการตั้งค่าล่วงหน้า
+ * [DELETE] Deletes an advance config
  */
 exports.deleteAdvancedSchedule = async (req, res) => {
   try {
@@ -197,7 +178,6 @@ exports.deleteAdvancedSchedule = async (req, res) => {
     await classesScheduleService.deleteAdvancedSchedule(id, performedByUser);
     res.json({ success: true, message: "ลบการตั้งค่าล่วงหน้าสำเร็จ" });
   } catch (error) {
-    console.error("[ScheduleController] deleteAdvanced Error:", error);
-    res.status(400).json({ success: false, message: error.message });
+    sendError(res, error, "ไม่สามารถลบการตั้งค่าล่วงหน้าได้");
   }
 };

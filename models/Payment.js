@@ -1,6 +1,6 @@
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/db');
-const { PAYMENT_METHOD, PAYMENT_STATUS } = require('./Enums');
+const { PAYMENT_METHOD_TYPE, PAYMENT_STATUS_TYPE, PAYMENT_STATUS } = require('./Enums');
 
 const Payment = sequelize.define('PAYMENTS', {
     id: {
@@ -8,8 +8,8 @@ const Payment = sequelize.define('PAYMENTS', {
         defaultValue: DataTypes.UUIDV4,
         primaryKey: true,
     },
-    // FK เชื่อมกลับไปหา ClassesBooking (1:1)
-    classes_booking_id: { 
+    // FK back to ClassesBooking (1:1)
+    classes_booking_id: {
         type: DataTypes.UUID,
         unique: true,
         allowNull: false,
@@ -19,8 +19,8 @@ const Payment = sequelize.define('PAYMENTS', {
         type: DataTypes.DECIMAL(10, 2),
         allowNull: false,
     },
-    payment_method: { type: PAYMENT_METHOD, allowNull: false },
-    payment_status: { type: PAYMENT_STATUS, allowNull: false, defaultValue: 'PENDING' },
+    payment_method: { type: PAYMENT_METHOD_TYPE, allowNull: false },
+    payment_status: { type: PAYMENT_STATUS_TYPE, allowNull: false, defaultValue: PAYMENT_STATUS.PENDING },
     attachment: DataTypes.TEXT,
 
     created_date: { type: DataTypes.DATE(6), allowNull: false, defaultValue: DataTypes.NOW },

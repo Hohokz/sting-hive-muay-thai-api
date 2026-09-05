@@ -1,7 +1,8 @@
 const dashboardService = require("../services/dashboardService");
+const { sendError } = require("../utils/httpError");
 
 /**
- * [GET] ดึงข้อมูลสรุป Dashboard รายวัน (Capacity รวม, จำนวนคนจอง)
+ * [GET] Returns the daily dashboard summary (total capacity, booking count)
  */
 const getDashboardSummary = async (req, res) => {
   try {
@@ -13,21 +14,16 @@ const getDashboardSummary = async (req, res) => {
       data: summary,
     });
   } catch (error) {
-    console.error("[DashboardController] getSummary Error:", error);
-    res.status(500).json({
-      success: false,
-      message: "ไม่สามารถโหลดข้อมูลสรุป Dashboard ได้",
-      error: error.message
-    });
+    sendError(res, error, "ไม่สามารถโหลดข้อมูลสรุป Dashboard ได้");
   }
 };
 
 /**
- * [GET] ดึงรายการการจองทั้งหมดของวันที่เลือก (สำหรับตาราง Dashboard)
+ * [GET] Returns all bookings for a given date (for the dashboard table)
  */
 const getDailyBookings = async (req, res) => {
   try {
-    const { date } = req.query; // รับรูปแบบ YYYY-MM-DD
+    const { date } = req.query; // format: YYYY-MM-DD
     if (!date) {
       return res.status(400).json({
         success: false,
@@ -43,15 +39,24 @@ const getDailyBookings = async (req, res) => {
       data,
     });
   } catch (error) {
-    console.error("[DashboardController] getDailyBookings Error:", error);
-    return res.status(500).json({
-      success: false,
-      message: "เกิดข้อผิดพลาดในการดึงข้อมูลรายการจอง",
-    });
+    sendError(res, error, "เกิดข้อผิดพลาดในการดึงข้อมูลรายการจอง");
+  }
+};
+
+/**
+ * [GET] Returns the total database size in bytes
+ */
+const getDatabaseSize = async (req, res) => {
+  try {
+    const bytes = await dashboardService.getDatabaseSize();
+    res.status(200).json({ success: true, data: { bytes } });
+  } catch (error) {
+    sendError(res, error, "ไม่สามารถดึงข้อมูลขนาดฐานข้อมูลได้");
   }
 };
 
 module.exports = {
   getDashboardSummary,
-  getDailyBookings
+  getDailyBookings,
+  getDatabaseSize,
 };

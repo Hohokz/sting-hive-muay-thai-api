@@ -7,23 +7,24 @@ const {
   ClassesSchedule,
   Gyms,
 } = require("../models/Associations");
+const { BOOKING_STATUS } = require("../models/Enums");
 
 /**
- * [CRON JOB] ระบบจัดการข้อมูลประจำเดือน
- * - ทำงานทุกวันที่ 1 ของเดือน เวลา 01:00 น.
- * - ส่งออกข้อมูลการจองของเดือนที่แล้วไปยัง Google Sheets เพื่อสำรองข้อมูล
- * - ล้างข้อมูลการตั้งค่าล่วงหน้าที่เก่าเกินไปออกเพื่อประหยัดพื้นที่
+ * [CRON JOB] Monthly data archival.
+ * - Runs on the 1st of each month at 01:00
+ * - Exports last month's bookings to Google Sheets as a backup
+ * - Clears advance configs old enough that they're no longer needed
  */
 const startMonthlyArchivalJob = () => {
   cron.schedule("0 1 1 * *", async () => {
-    console.log("[ArchivalJob] ⏰ เริ่มงานสำรองข้อมูลประจำเดือน...");
+    console.log("[ArchivalJob] ⏰ Starting monthly archival job...");
     await runMonthlyArchivalJob();
   });
 };
 
 const runMonthlyArchivalJob = async () => {
   try {
-    // 1. คำนวณช่วงเวลา (เดือนที่แล้ว)
+    // 1. Compute the previous month's range
     const now = new Date();
     const startOfCurrentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const startOfPreviousMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
@@ -34,15 +35,15 @@ const runMonthlyArchivalJob = async () => {
       year: "numeric",
     });
 
-    console.log(`[ArchivalJob] 📅 กำลังจัดการข้อมูลเดือน: ${prevMonthLabel}`);
+    console.log(`[ArchivalJob] 📅 Processing month: ${prevMonthLabel}`);
 
-    // 2. ดึงข้อมูลการจองที่สำเร็จแล้วของเดือนที่แล้ว
+    // 2. Fetch last month's succeeded bookings
     const bookings = await ClassesBooking.findAll({
       where: {
         date_booking: {
           [Op.between]: [startOfPreviousMonth, endOfPreviousMonth],
         },
-        booking_status: "SUCCEED",
+        booking_status: BOOKING_STATUS.SUCCEED,
       },
       include: [
         {
@@ -59,18 +60,17 @@ const runMonthlyArchivalJob = async () => {
       order: [["date_booking", "ASC"], ["id", "ASC"]],
     });
 
-    console.log(`[ArchivalJob] 🔍 พบรายการจองที่ต้องสำรอง: ${bookings.length} รายการ`);
+    console.log(`[ArchivalJob] 🔍 Bookings to archive: ${bookings.length}`);
 
     if (bookings.length > 0) {
-      // 3. ส่งออกไปยัง Google Sheets
+      // 3. Export to Google Sheets
       await exportToGoogleSheets(bookings, prevMonthLabel);
     }
 
-    // 4. ล้างข้อมูล Advance Configs ที่เก่าเกินไป
-    // (ลบข้อมูลที่สิ้นสุดก่อนวันที่เริ่มเดือนที่แล้ว - เก็บไว้ประมาณ 1-2 เดือน)
+    // 4. Clear advance configs that are old enough (keep roughly 1-2 months)
     const cleanupDate = startOfPreviousMonth;
 
-    console.log(`[ArchivalJob] 🧹 กำลังลบ Config เก่าที่สิ้นสุดก่อน ${cleanupDate.toDateString()}...`);
+    console.log(`[ArchivalJob] 🧹 Deleting configs ending before ${cleanupDate.toDateString()}...`);
 
     const deletedCount = await ClassesBookingInAdvance.destroy({
       where: {
@@ -78,16 +78,16 @@ const runMonthlyArchivalJob = async () => {
       },
     });
 
-    console.log(`[ArchivalJob] ✅ ลบเรียบร้อย: ${deletedCount} รายการ`);
-    console.log("[ArchivalJob] 🏁 เสร็จสิ้นภารกิจประจำเดือน\n");
+    console.log(`[ArchivalJob] ✅ Deleted: ${deletedCount}`);
+    console.log("[ArchivalJob] 🏁 Monthly job complete\n");
 
   } catch (error) {
-    console.error("[ArchivalJob] ❌ เกิดข้อผิดพลาด:", error);
+    console.error("[ArchivalJob] ❌ Error:", error);
   }
 };
 
 /**
- * ฟังก์ชันส่งออกข้อมูลไปยัง Google Sheets
+ * Exports bookings to Google Sheets.
  */
 const exportToGoogleSheets = async (bookings, sheetTitle) => {
   const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
@@ -95,7 +95,7 @@ const exportToGoogleSheets = async (bookings, sheetTitle) => {
   const folderId = process.env.GOOGLE_ARCHIVE_FOLDER_ID;
 
   if (!clientEmail || !privateKey) {
-    console.error("[GoogleExport] ❌ ขาด GOOGLE_SERVICE_ACCOUNT_EMAIL หรือ GOOGLE_PRIVATE_KEY");
+    console.error("[GoogleExport] ❌ Missing GOOGLE_SERVICE_ACCOUNT_EMAIL or GOOGLE_PRIVATE_KEY");
     return;
   }
 
@@ -111,7 +111,7 @@ const exportToGoogleSheets = async (bookings, sheetTitle) => {
   const drive = google.drive({ version: "v3", auth });
 
   try {
-    // A. สร้าง Spreadsheet ใหม่
+    // A. Create the spreadsheet
     const resource = {
       properties: { title: `StingHive Bookings - ${sheetTitle}` },
     };
@@ -122,19 +122,21 @@ const exportToGoogleSheets = async (bookings, sheetTitle) => {
     });
 
     const spreadsheetId = spreadsheet.data.spreadsheetId;
-    console.log(`[GoogleExport] 📄 สร้างไฟล์สำเร็จ: ${spreadsheet.data.spreadsheetUrl}`);
+    console.log(`[GoogleExport] 📄 Created: ${spreadsheet.data.spreadsheetUrl}`);
 
-    // B. ย้ายไฟล์เข้า Folder (ถ้ากำหนดไว้)
+    // B. Move it into the archive folder, if configured
     if (folderId) {
       await drive.files.update({
         fileId: spreadsheetId,
         addParents: folderId,
         fields: "id, parents",
       });
-      console.log(`[GoogleExport] 📁 ย้ายเข้า Folder ID: ${folderId}`);
+      console.log(`[GoogleExport] 📁 Moved into folder: ${folderId}`);
     }
 
-    // C. เตรียมข้อมูล (Headers & Rows)
+    // C. Prepare the header row and data rows.
+    // Header labels are kept in Thai deliberately — this sheet is read by
+    // Thai-speaking gym staff, not a developer-facing artifact.
     const headerRow = [
       "ID", "วันที่จอง", "ช่วงเวลา", "ประเภท", "สาขา", "ชื่อลูกค้า", "อีเมล", "เบอร์โทร", "จำนวน", "สถานะ"
     ];
@@ -151,7 +153,7 @@ const exportToGoogleSheets = async (bookings, sheetTitle) => {
 
     const values = [headerRow, ...rows];
 
-    // D. บันทึกข้อมูลลงใน Sheet
+    // D. Write the data into the sheet
     await sheets.spreadsheets.values.update({
       spreadsheetId,
       range: "Sheet1!A1",
@@ -159,7 +161,7 @@ const exportToGoogleSheets = async (bookings, sheetTitle) => {
       resource: { values },
     });
 
-    console.log(`[GoogleExport] ✅ เขียนข้อมูลลงไฟล์สำเร็จ ${rows.length} แถว`);
+    console.log(`[GoogleExport] ✅ Wrote ${rows.length} rows`);
   } catch (err) {
     console.error("[GoogleExport] ❌ Error:", err);
   }

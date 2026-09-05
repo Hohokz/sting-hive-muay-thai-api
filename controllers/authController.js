@@ -3,24 +3,24 @@ const User = require('../models/User');
 const activityLogService = require('../services/activityLogService');
 
 /**
- * [POST] เข้าสู่ระบบ (Login)
+ * [POST] Login
  */
 exports.login = async (req, res) => {
     try {
         const { username, password } = req.body;
 
-        // 1. ค้นหาผู้ใช้
+        // 1. Look up the user
         const user = await User.findOne({ where: { username } });
         if (!user) return res.status(401).json({ success: false, message: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' });
 
-        // 2. ตรวจสอบรหัสผ่าน
+        // 2. Verify the password
         const isMatch = await authService.comparePassword(password, user.password);
         if (!isMatch) return res.status(401).json({ success: false, message: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' });
 
-        // 3. สร้าง Access Token และ Refresh Token
+        // 3. Generate the access and refresh tokens
         const tokens = authService.generateTokens(user);
 
-        // 4. บันทึก Log การเข้าใช้งาน
+        // 4. Log the login
         await activityLogService.createLog({
             user_id: user.id,
             user_name: user.name || user.username,
@@ -30,15 +30,15 @@ exports.login = async (req, res) => {
             details: { role: user.role }
         });
 
-        // 5. ส่ง Refresh Token ผ่าน HttpOnly Cookie (เพื่อความปลอดภัยสูงสุด)
+        // 5. Send the refresh token via an HttpOnly cookie for security
         res.cookie('jwt', tokens.refreshToken, {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
-            sameSite: 'None', 
-            maxAge: 24 * 60 * 60 * 1000 // 1 วัน
+            sameSite: 'None',
+            maxAge: 24 * 60 * 60 * 1000 // 1 day
         });
 
-        // 6. ส่งข้อมูลผู้ใช้และ Access Token กลับไป
+        // 6. Return the user info and access token
         res.json({
             success: true,
             message: 'เข้าสู่ระบบสำเร็จ',
@@ -58,7 +58,7 @@ exports.login = async (req, res) => {
 };
 
 /**
- * [POST] ต่ออายุ Access Token (Refresh Token)
+ * [POST] Refresh the access token
  */
 exports.refreshToken = async (req, res) => {
     try {
@@ -71,7 +71,7 @@ exports.refreshToken = async (req, res) => {
         try {
             decoded = authService.verifyRefreshToken(refreshToken);
         } catch (err) {
-            // ถ้า Token หมดอายุ ให้ล้าง Cookie
+            // Clear the cookie if the token expired
             res.clearCookie('jwt', { httpOnly: true, secure: true, sameSite: 'None' });
             return res.status(403).json({ success: false, message: 'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่' });
         }
@@ -79,7 +79,7 @@ exports.refreshToken = async (req, res) => {
         const user = await User.findByPk(decoded.id);
         if (!user) return res.status(404).json({ success: false, message: 'ไม่พบข้อมูลผู้ใช้' });
 
-        // สร้าง Access Token ใบใหม่
+        // Issue a new access token
         const newAccessToken = authService.generateAccessToken(user);
 
         res.json({
@@ -94,11 +94,11 @@ exports.refreshToken = async (req, res) => {
 };
 
 /**
- * [POST] ออกจากระบบ (Logout)
+ * [POST] Logout
  */
 exports.logout = (req, res) => {
-    // ล้าง Cookie ทิ้ง
-    res.clearCookie('jwt', { 
+    // Clear the refresh-token cookie
+    res.clearCookie('jwt', {
         httpOnly: true, 
         secure: true, 
         sameSite: 'None' 

@@ -1,13 +1,15 @@
 const { ClassesBooking, ClassesSchedule } = require("../models/Associations");
 const { Op } = require("sequelize");
+const { sequelize } = require("../config/db");
 const dayjs = require("dayjs");
 const utc = require("dayjs/plugin/utc");
+const { BOOKING_STATUS } = require("../models/Enums");
 
 dayjs.extend(utc);
 
 /**
- * [READ] สรุปข้อมูลหน้า Dashboard รายวัน
- * @param {Date|string} targetDate 
+ * [READ] Returns the daily dashboard summary.
+ * @param {Date|string} targetDate
  */
 const getDashboardSummary = async (targetDate = new Date()) => {
   try {
@@ -15,23 +17,23 @@ const getDashboardSummary = async (targetDate = new Date()) => {
     const startOfDay = baseDate.startOf("day").toDate();
     const endOfDay = baseDate.endOf("day").toDate();
 
-    // เงื่อนไขพื้นฐาน: สถานะสำเร็จ และอยู่ในวันที่กำหนด
+    // Base condition: succeeded bookings within the given day
     const commonWhere = {
-      booking_status: "SUCCEED",
+      booking_status: BOOKING_STATUS.SUCCEED,
       date_booking: {
         [Op.between]: [startOfDay, endOfDay],
       },
     };
 
-    // 1. ดึงข้อมูลพื้นฐานและผลรวมแบบขนาน (Parallel Fetch)
+    // Fetch counts and sums in parallel
     const [todayCount, totalSum, groupSum, privateSum] = await Promise.all([
-      // จำนวนรายการจองทั้งหมด
+      // Total number of bookings
       ClassesBooking.count({ where: commonWhere }),
 
-      // ยอดรวมจำนวนคนเข้าเรียนทั้งหมด
+      // Total seats booked across all classes
       ClassesBooking.sum("capacity", { where: commonWhere }),
 
-      // ยอดรวมจำนวนคนเข้าเรียนเฉพาะ Group Class
+      // Total seats booked, group classes only
       ClassesBooking.sum("capacity", {
         where: commonWhere,
         include: [
@@ -45,7 +47,7 @@ const getDashboardSummary = async (targetDate = new Date()) => {
         ],
       }),
 
-      // ยอดรวมจำนวนคนเข้าเรียนเฉพาะ Private Class
+      // Total seats booked, private classes only
       ClassesBooking.sum("capacity", {
         where: commonWhere,
         include: [
@@ -74,8 +76,8 @@ const getDashboardSummary = async (targetDate = new Date()) => {
 };
 
 /**
- * [READ] ดึงรายการจองทั้งหมดของวันที่เลือก
- * @param {string} date - รูปแบบ YYYY-MM-DD
+ * [READ] Returns all bookings for a given date.
+ * @param {string} date - Format: YYYY-MM-DD
  */
 const getDailyBookingsByDate = async (date) => {
   try {
@@ -98,12 +100,12 @@ const getDailyBookingsByDate = async (date) => {
       order: [["date_booking", "ASC"]],
     });
 
-    // ปรับรูปแบบข้อมูล (Enrichment) ก่อนส่งคืน
+    // Reshape for the frontend
     return bookings.map((booking) => {
       const b = booking.toJSON();
       return {
         ...b,
-        schedule_id: b.schedule?.id, // แปะ ID ตารางเรียนไว้ชั้นนอกสุดเพื่อง่ายต่อการใช้งาน
+        schedule_id: b.schedule?.id, // hoisted for convenience
       };
     });
   } catch (error) {
@@ -112,7 +114,19 @@ const getDailyBookingsByDate = async (date) => {
   }
 };
 
+/**
+ * [READ] Returns the total database size in bytes, for the storage-usage
+ * warning banner on the admin export/cleanup page.
+ */
+const getDatabaseSize = async () => {
+  const [[row]] = await sequelize.query(
+    `SELECT pg_database_size(current_database()) AS bytes;`,
+  );
+  return Number(row.bytes);
+};
+
 module.exports = {
   getDashboardSummary,
   getDailyBookingsByDate,
+  getDatabaseSize,
 };

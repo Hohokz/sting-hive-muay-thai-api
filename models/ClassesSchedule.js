@@ -1,5 +1,6 @@
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/db');
+const { GYM_ENUM } = require('./Enums');
 
 const ClassesSchedule = sequelize.define('CLASSES_SCHEDULE', {
     id: {
@@ -16,9 +17,10 @@ const ClassesSchedule = sequelize.define('CLASSES_SCHEDULE', {
         allowNull: false,
     },
     gym_enum: {
+        // Values/order kept identical to before — sourced from the shared enum.
         type: DataTypes.ENUM({
-            values: ['STING_CLUB', 'STING_HIVE'],
-            type: 'gym_enum' 
+            values: [GYM_ENUM.STING_CLUB, GYM_ENUM.STING_HIVE],
+            type: 'gym_enum'
         }),
         allowNull: false,
     },

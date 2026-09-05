@@ -1,8 +1,7 @@
 const nodemailer = require("nodemailer");
 
 /**
- * ตั้งค่าการเชื่อมต่อกับระบบส่งอีเมล (Email Transport)
- * ใช้ข้อมูลจาก Node Environment (.env)
+ * Configures the email transport, using values from the environment (.env).
  */
 const transporter = nodemailer.createTransport({
   host: process.env.EMAIL_HOST,
@@ -12,17 +11,17 @@ const transporter = nodemailer.createTransport({
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
   },
-  // ตั้งค่า Timeout เพื่อป้องกันปัญหาค้างเมื่อเชื่อมต่อไม่ได้
-  connectionTimeout: 10000, // 10 วินาที
+  // Timeouts to avoid hanging when the connection can't be established
+  connectionTimeout: 10000, // 10 seconds
   greetingTimeout: 10000,
   socketTimeout: 10000,
 });
 
 /**
- * ฟังก์ชันหลักสำหรับส่งอีเมลยืนยันการจอง
- * @param {string} to - อีเมลผู้รับ
- * @param {string} subject - หัวข้ออีเมล
- * @param {string} html - เนื้อหาอีเมลรูปแบบ HTML
+ * Sends a booking confirmation email.
+ * @param {string} to - Recipient email
+ * @param {string} subject - Email subject
+ * @param {string} html - Email body (HTML)
  */
 const sendBookingConfirmationEmail = async (to, subject, html) => {
   try {
@@ -32,15 +31,15 @@ const sendBookingConfirmationEmail = async (to, subject, html) => {
       subject,
       html,
     });
-    console.log(`[EmailService] ✅ ส่งอีเมลสำเร็จ: ${to}`);
+    console.log(`[EmailService] Sent: ${to}`);
   } catch (err) {
-    console.error("[EmailService] ❌ เกิดข้อผิดพลาดในการส่งอีเมล:");
-    console.error(`  - จาก: ${process.env.MAIL_FROM}`);
-    console.error(`  - ถึง: ${to}`);
-    console.error(`  - สาเหตุ: ${err.message}`);
-    
-    // Throw error เพื่อให้ Service ต้นทางรับทราบและจัดการต่อ (เช่น บันทึกลง Log)
-    throw err; 
+    console.error("[EmailService] Failed to send email:");
+    console.error(`  - From: ${process.env.MAIL_FROM}`);
+    console.error(`  - To: ${to}`);
+    console.error(`  - Reason: ${err.message}`);
+
+    // Re-thrown so the calling service is aware and can react (e.g. log it)
+    throw err;
   }
 };
 

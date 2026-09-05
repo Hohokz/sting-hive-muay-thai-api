@@ -1,4 +1,4 @@
-require("dotenv").config(); // ✅ โหลด Environment Variables ทันทีที่เริ่ม
+require("dotenv").config(); // Load environment variables immediately on startup
 
 const express = require("express");
 const cors = require("cors");
@@ -19,7 +19,7 @@ let isDbConnected = false;
 app.use(cookieParser());
 app.use(express.json());
 
-// ตั้งค่า CORS (Cross-Origin Resource Sharing)
+// Configure CORS (Cross-Origin Resource Sharing)
 const allowedOrigins = [
   "http://localhost:5173",
   "http://localhost:5175",
@@ -30,9 +30,9 @@ const allowedOrigins = [
 app.use(
   cors({
     origin: (origin, callback) => {
-      // 1. อนุญาตถ้าไม่มี origin (เช่นการเรียกผ่าน Postman หรือ Server-to-Server)
-      // 2. อนุญาตถ้าอยู่ใน list allowedOrigins
-      // 3. อนุญาตถ้าเป็น codespaces (ลงท้ายด้วย app.github.dev) เพื่อความสะดวกในการพัฒนา
+      // 1. Allow requests with no origin (e.g. Postman or server-to-server calls)
+      // 2. Allow anything in the allowedOrigins list
+      // 3. Allow Codespaces (ends with app.github.dev), for local development convenience
       if (
         !origin ||
         allowedOrigins.includes(origin) ||
@@ -44,7 +44,8 @@ app.use(
       console.error(`[CORS Error] Origin ${origin} not allowed`);
       callback(new Error("Not allowed by CORS"), false);
     },
-    credentials: true, // อนุญาตให้ส่ง Cookie/Auth Header
+    credentials: true, // allow sending cookies/auth headers
+    exposedHeaders: ["Content-Disposition"], // so the frontend can read the export filename
   }),
 );
 
@@ -61,7 +62,7 @@ const setupDatabase = async () => {
     isDbConnected = true;
     console.log("✅ [Server] Database connected.");
 
-    // เริ่มทำงาน Cron Jobs ทันทีเมื่อ DB พร้อม
+    // Start the cron jobs as soon as the DB is ready
     startAdvancedScheduleJob();
     startMonthlyArchivalJob();
     console.log("⏰ [Server] Background Jobs initialized.");
@@ -71,14 +72,14 @@ const setupDatabase = async () => {
   }
 };
 
-// เริ่มต้นเชื่อมต่อฐานข้อมูล
+// Kick off the database connection
 setupDatabase();
 
 // -----------------------------------------------------------------
 // C. API ROUTES
 // -----------------------------------------------------------------
 
-// แบ่งกลุ่ม Routes ตามโมดูล
+// Mount routes by module
 app.use("/api/v1/auth", require("./routes/authRoutes"));
 app.use("/api/v1/users", require("./routes/userRoutes"));
 app.use("/api/v1/schedules", require("./routes/classesScheduleRoutes"));
@@ -107,4 +108,4 @@ if (NODE_ENV !== "test") {
   });
 }
 
-module.exports = app; // สำหรับการทำ Testing หรือ Deploy บน Vercel
+module.exports = app; // for testing, and for deploying on Vercel

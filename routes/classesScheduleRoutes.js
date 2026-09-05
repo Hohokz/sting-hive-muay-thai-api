@@ -1,8 +1,6 @@
 const express = require("express");
 const router = express.Router();
 
-// นำเข้า Controller Functions ทั้งหมด
-// Assume the controller file is located at '../controllers/classesScheduleController'
 const scheduleController = require("../controllers/classesScheduleController");
 const {
   authenticateToken,
@@ -10,17 +8,16 @@ const {
 } = require("../middlewares/authMiddleware");
 
 // =================================================================
-// 🔗 SCHEDULE ENDPOINTS (API: /api/v1/schedules)
+// SCHEDULE ENDPOINTS (API: /api/v1/schedules)
 // =================================================================
 
 // 1. [READ] GET /api/v1/schedules
-// ดึงข้อมูล Schedule ทั้งหมด หรือตามช่วงเวลา (start_date, end_date ใน Query params)
 router.get("/", scheduleController.getSchedules);
 
 router.get("/available", scheduleController.getAvailableSchedulesByBookingDate);
 
 // 2. [CREATE] POST /api/v1/schedules
-// สร้าง Schedule ใหม่ พร้อม Capacity
+// Creates a new schedule along with its capacity
 router.post(
   "/",
   authenticateToken,
@@ -29,7 +26,7 @@ router.post(
 );
 
 // 3. [UPDATE] PUT /api/v1/schedules/:id
-// อัปเดต Schedule และ Capacity ด้วย ID
+// Updates a schedule and its capacity by ID
 router.put(
   "/:id",
   authenticateToken,
@@ -38,7 +35,6 @@ router.put(
 );
 
 // 4. [DELETE] DELETE /api/v1/schedules/:id
-// ลบ Schedule ด้วย ID
 router.delete(
   "/:id",
   authenticateToken,
@@ -47,7 +43,7 @@ router.delete(
 );
 
 // 5. [CREATE] POST /api/v1/schedules/in-advance
-// สร้าง/แก้ไข Advance Config
+// Creates/updates an advance config
 router.post(
   "/in-advance",
   authenticateToken,
@@ -56,7 +52,7 @@ router.post(
 );
 
 // 6. [READ] GET /api/v1/schedules/in-advance
-// อ่าน Advance Config แยกตามประเภท
+// Reads advance configs, split by type
 router.get(
   "/in-advance",
   authenticateToken,
@@ -65,7 +61,6 @@ router.get(
 );
 
 // 7. [UPDATE] PUT /api/v1/schedules/in-advance/:id
-// แก้ไข Advance Config
 router.put(
   "/in-advance/:id",
   authenticateToken,
@@ -74,7 +69,6 @@ router.put(
 );
 
 // 8. [DELETE] DELETE /api/v1/schedules/in-advance/:id
-// ลบ Advance Config
 router.delete(
   "/in-advance/:id",
   authenticateToken,
@@ -82,8 +76,7 @@ router.delete(
   scheduleController.deleteAdvancedSchedule,
 );
 
-// 9. [READ] GET /api/v1/schedules/in-advance/:id
-// แก้ไข Advance Config
-// router.get("/in-advance/active", authenticateToken, authorizeRole(["ADMIN"]), scheduleController.activeScheduleInAdvance);
+// Note: classesScheduleService.activeScheduleInAdvance (a manual trigger for
+// the advance-schedule cron job) has no live route calling it today.
 
 module.exports = router;

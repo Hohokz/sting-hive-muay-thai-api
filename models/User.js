@@ -1,10 +1,11 @@
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/db');
+const { USER_ROLE } = require('./Enums');
 
 const User = sequelize.define('USERS', {
     id: {
         type: DataTypes.UUID,
-        defaultValue: DataTypes.UUIDV4, // ใช้ UUIDV4 เพื่อสร้าง UUID ใหม่
+        defaultValue: DataTypes.UUIDV4,
         primaryKey: true,
     },
     username: {
@@ -27,21 +28,23 @@ const User = sequelize.define('USERS', {
         type: DataTypes.STRING(20),
     },
     role: {
+        // Values/order kept identical to before — sourced from the shared enum.
         type: DataTypes.ENUM({
-            values: ['ADMIN', 'USER'],
+            values: [USER_ROLE.ADMIN, USER_ROLE.USER],
             type: 'user_role'
         }),
         allowNull: false,
-        defaultValue: 'USER',
+        defaultValue: USER_ROLE.USER,
     },
     is_active: {
         type: DataTypes.BOOLEAN,
         allowNull: false,
         defaultValue: true,
     },
-    // Audit Fields (Sequelize จะจัดการ created_at/updated_at เอง แต่เราใช้ชื่อที่กำหนดเอง)
+    // Audit fields (Sequelize could manage created_at/updated_at itself, but
+    // this project uses its own column names instead).
     created_date: {
-        type: DataTypes.DATE(6), // TIMESTAMPTZ ใน Postgres
+        type: DataTypes.DATE(6), // TIMESTAMPTZ in Postgres
         allowNull: false,
         defaultValue: DataTypes.NOW,
     },
@@ -58,8 +61,8 @@ const User = sequelize.define('USERS', {
     }
 }, {
     tableName: 'users',
-    timestamps: false, // ปิดการใช้งาน timestamps อัตโนมัติของ Sequelize
-    underscored: true // ตั้งชื่อคอลัมน์แบบ underscore (ถ้าจำเป็น)
+    timestamps: false, // Sequelize's automatic timestamps are disabled
+    underscored: true
 });
 
 module.exports = User;

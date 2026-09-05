@@ -7,39 +7,43 @@ const {
   ClassesBooking,
   ClassesBookingInAdvance,
 } = require("../models/Associations");
-const { Op, Sequelize } = require("sequelize");
+const { Op } = require("sequelize");
 const dayjs = require("dayjs");
 const utc = require("dayjs/plugin/utc");
 
 const activityLogService = require("./activityLogService");
 const advancedScheduleJob = require("../job/advancedScheduleJob");
 const cacheUtil = require("../utils/cacheUtility");
+const { BOOKING_STATUS } = require("../models/Enums");
 
 dayjs.extend(utc);
+
+const ACTIVE_BOOKING_STATUSES_EXCLUDED = [
+  BOOKING_STATUS.CANCELED,
+  BOOKING_STATUS.FAILED,
+];
 
 // =================================================================
 // 1. HELPER / VALIDATION FUNCTIONS
 // =================================================================
 
 /**
- * ดึงช่วงเวลาเริ่มต้นและสิ้นสุดของวัน รวมถึงเวลาสำหรับเช็ค Config (07:00)
+ * Returns the start/end of a day, plus the time used to check advance configs (07:00).
  * @param {string|Date} date
  * @returns {object} { checkTime, startOfDay, endOfDay }
  */
 const _getDateRange = (date) => {
   const targetDate = dayjs(date);
   return {
-    // เวลาสำหรับเช็ค Config (ยึดตามมาตรฐานระบบที่ 07:00 AM)
+    // Config checks are anchored to 07:00 AM by convention.
     checkTime: targetDate.startOf("day").hour(7).toDate(),
-    // เริ่มต้นวัน (00:00:00)
     startOfDay: targetDate.startOf("day").toDate(),
-    // สิ้นสุดวัน (23:59:59)
     endOfDay: targetDate.endOf("day").toDate(),
   };
 };
 
 /**
- * ตรวจสอบความถูกต้องพื้นฐานของช่วงเวลา (Start ก่อน End) และความจุ (Capacity)
+ * Validates basic schedule input: start time before end time, and a positive capacity.
  */
 const _validateScheduleInput = (newStartTime, newEndTime, capacity) => {
   const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
@@ -50,7 +54,7 @@ const _validateScheduleInput = (newStartTime, newEndTime, capacity) => {
     throw error;
   }
 
-  // แปลงเวลาเป็นนาทีเพื่อเปรียบเทียบ
+  // Convert to minutes for comparison
   const [startH, startM] = newStartTime.split(":").map(Number);
   const [endH, endM] = newEndTime.split(":").map(Number);
   const startMinutes = startH * 60 + startM;
@@ -77,7 +81,7 @@ const _validateScheduleInput = (newStartTime, newEndTime, capacity) => {
 // =================================================================
 
 /**
- * [CREATE] สร้างรายการ Schedule ใหม่ พร้อมกำหนดความจุ (Capacity)
+ * [CREATE] Creates a new schedule along with its capacity record.
  */
 const createSchedule = async (scheduleData, performedByUser = null) => {
   const {
@@ -96,7 +100,7 @@ const createSchedule = async (scheduleData, performedByUser = null) => {
   const transaction = await ClassesSchedule.sequelize.transaction();
 
   try {
-    // 1. สร้าง Schedule Master
+    // 1. Create the schedule record
     const newSchedule = await ClassesSchedule.create(
       {
         start_time,
@@ -114,7 +118,7 @@ const createSchedule = async (scheduleData, performedByUser = null) => {
       { transaction },
     );
 
-    // 2. สร้าง Capacity ผูกกับ Schedule
+    // 2. Create the capacity record tied to the schedule
     await ClassesCapacity.create(
       {
         classes_id: newSchedule.id,
@@ -128,7 +132,7 @@ const createSchedule = async (scheduleData, performedByUser = null) => {
       { transaction },
     );
 
-    // 3. บันทึก Log
+    // 3. Log the action
     await activityLogService.createLog({
       user_id: performedByUser?.id || null,
       user_name:
@@ -149,7 +153,6 @@ const createSchedule = async (scheduleData, performedByUser = null) => {
 
     await transaction.commit();
 
-    // ✅ Invalidate Cache
     cacheUtil.clearByPrefix("schedules");
     cacheUtil.clearByPrefix("availability");
 
@@ -164,7 +167,7 @@ const createSchedule = async (scheduleData, performedByUser = null) => {
 };
 
 /**
- * [UPDATE] อัปเดตรายการ Schedule และความจุ (Capacity)
+ * [UPDATE] Updates a schedule and its capacity.
  */
 const updateSchedule = async (id, updateData, performedByUser = null) => {
   const schedule = await ClassesSchedule.findByPk(id, {
@@ -182,7 +185,6 @@ const updateSchedule = async (id, updateData, performedByUser = null) => {
     end_time = schedule.end_time,
     gym_enum = schedule.gym_enum,
     capacity,
-    is_private_class = schedule.is_private_class,
   } = updateData;
 
   // Ensure time format is HH:mm for validation (in case it comes from DB as HH:mm:ss)
@@ -206,7 +208,7 @@ const updateSchedule = async (id, updateData, performedByUser = null) => {
       capacity: currentCapacity,
     };
 
-    // 1. อัปเดต Schedule
+    // 1. Update the schedule
     await schedule.update(
       {
         ...updateData,
@@ -223,7 +225,7 @@ const updateSchedule = async (id, updateData, performedByUser = null) => {
       { transaction },
     );
 
-    // 2. อัปเดต Capacity (ถ้ามีการส่งค่ามา)
+    // 2. Update capacity, if a new value was provided
     if (capacity !== undefined) {
       await ClassesCapacity.update(
         {
@@ -238,7 +240,7 @@ const updateSchedule = async (id, updateData, performedByUser = null) => {
       );
     }
 
-    // 3. บันทึก Log
+    // 3. Log the action
     await activityLogService.createLog({
       user_id: performedByUser?.id || null,
       user_name:
@@ -257,7 +259,6 @@ const updateSchedule = async (id, updateData, performedByUser = null) => {
 
     await transaction.commit();
 
-    // ✅ Invalidate Cache
     cacheUtil.clearByPrefix("schedules");
     cacheUtil.clearByPrefix("availability");
 
@@ -286,7 +287,7 @@ const getSchedulesById = async (id) => {
 };
 
 /**
- * [READ] ดึงข้อมูล Schedule ทั้งหมด หรือกรองตามช่วงเวลา
+ * [READ] Returns all schedules, optionally filtered by a time range.
  */
 const getSchedules = async (startDate, endDate) => {
   const whereCondition = {};
@@ -301,7 +302,7 @@ const getSchedules = async (startDate, endDate) => {
       throw error;
     }
 
-    // ค้นหาตารางที่มีเวลาเริ่มหรือเวลาจบอยู่ในช่วงที่กำหนด
+    // Match schedules whose start or end time falls within the given range
     whereCondition[Op.or] = [
       { start_time: { [Op.between]: [start, end] } },
       { end_time: { [Op.between]: [start, end] } },
@@ -319,7 +320,7 @@ const getSchedules = async (startDate, endDate) => {
       include: [{ model: ClassesCapacity, as: "capacity_data" }],
     });
 
-    cacheUtil.set(cacheKey, schedules, 60000); // เก็บใน Cache 1 นาที
+    cacheUtil.set(cacheKey, schedules, 60000); // cache for 1 minute
     return schedules;
   } catch (error) {
     console.error("[DB Error] Failed to retrieve schedules:", error);
@@ -328,7 +329,7 @@ const getSchedules = async (startDate, endDate) => {
 };
 
 /**
- * [READ] ดึงรายการตารางเรียนที่ว่างสำหรับวันที่ระบุ (Optimized with Cache)
+ * [READ] Returns available schedules for a given date (cache-optimized).
  */
 const getAvailableSchedulesByBookingDate = async (
   date,
@@ -336,13 +337,7 @@ const getAvailableSchedulesByBookingDate = async (
   isPrivateClass,
 ) => {
   try {
-    console.log(
-      "--------------- GET AVAILABLE SCHEDULES (SHARED LOGIC) ---------------",
-    );
-    console.log("Input Date:", date);
-    console.log("GymEnum:", gymEnum);
-
-    // 1. Fetch Base Schedules
+    // 1. Fetch base schedules
     const whereSchedule = {};
     if (gymEnum) whereSchedule.gym_enum = gymEnum;
     if (isPrivateClass !== undefined)
@@ -353,24 +348,20 @@ const getAvailableSchedulesByBookingDate = async (
       order: [["start_time", "ASC"]],
     });
 
-    console.log(`Found ${schedules.length} base schedules.`);
-
-    // 2. Iterate and Calculate Availability using Shared Function
+    // 2. Iterate and calculate availability using the shared function
     const availableSchedules = [];
 
     for (const schedule of schedules) {
-      // Call Shared Logic
-      // Note: This is N+1 query pattern, but given low N (classes per day), it's acceptable for consistency.
+      // Note: this is an N+1 query pattern, but given the low N (classes per
+      // day), it's acceptable in exchange for reusing the shared logic below.
       const availability = await getScheduleRealtimeAvailability(
         schedule.id,
         date,
       );
 
-      // If Gym/Class is closed, we might still want to show it as "Closed" or filter it out.
-      // Based on previous logic, we skip if closed by gym-wide rule.
-
+      // A gym-wide closure hides the schedule entirely; a class-level closure
+      // still surfaces further down via is_full/available_seats.
       if (availability.isCloseGym) {
-        console.log(`[Skip] Gym Closed for Schedule ${schedule.id}`);
         continue;
       }
 
@@ -381,27 +372,19 @@ const getAvailableSchedulesByBookingDate = async (
         gym_enum: schedule.gym_enum,
         gyms_id: schedule.gyms_id,
         capacity_data: {
-          id: schedule.capacity_data?.id, // Note: might need to fetch if not included in shared
+          id: schedule.capacity_data?.id,
           capacity: availability.maxCapacity,
         },
         booking_count: availability.currentBookingCount,
         available_seats: availability.availableSeats,
         is_full: availability.availableSeats <= 0,
       });
-
-      console.log(
-        `[${schedule.gym_enum} ${schedule.start_time}-${schedule.end_time} (${
-          schedule.is_private_class ? "Private" : "Group"
-        })] ID: ${schedule.id} | Max: ${availability.maxCapacity} | Booked: ${
-          availability.currentBookingCount
-        } | Avail: ${availability.availableSeats}`,
-      );
     }
 
     return availableSchedules;
   } catch (error) {
     console.error(
-      "[SUPABASE DB ERROR] getAvailableSchedulesByBookingDate:",
+      "[DB Error] getAvailableSchedulesByBookingDate:",
       error,
     );
     throw error;
@@ -409,7 +392,7 @@ const getAvailableSchedulesByBookingDate = async (
 };
 
 /**
- * [DELETE] ลบรายการตารางเรียน
+ * [DELETE] Deletes a schedule.
  */
 const deleteSchedule = async (id, performedByUser = null) => {
   try {
@@ -417,7 +400,7 @@ const deleteSchedule = async (id, performedByUser = null) => {
     if (scheduleToDelete) {
       await activityLogService.createLog({
         user_id: performedByUser?.id,
-        user_name: performedByUser?.username || "ADMIN",
+        user_name: performedByUser?.name || performedByUser?.username || "ADMIN",
         service: "SCHEDULE",
         action: "DELETE",
         details: {
@@ -436,7 +419,6 @@ const deleteSchedule = async (id, performedByUser = null) => {
       throw error;
     }
 
-    // ✅ Invalidate Cache
     cacheUtil.clearByPrefix("schedules");
     cacheUtil.clearByPrefix("availability");
 
@@ -461,8 +443,8 @@ const deleteSchedule = async (id, performedByUser = null) => {
 // =================================================================
 
 /**
- * [SHARED] ฟังก์ชันดึงสถานะความว่างของ Schedule 1 รายการ
- * ใช้ทั้งในหน้าเว็บและตรวจสอบก่อนการจอง
+ * [SHARED] Returns the real-time availability of a single schedule.
+ * Used both by the public availability view and the booking-time check.
  */
 const getScheduleRealtimeAvailability = async (
   scheduleId,
@@ -477,13 +459,17 @@ const getScheduleRealtimeAvailability = async (
     queryOptions.lock = transaction.LOCK.UPDATE;
   }
 
-  // ดึงข้อมูล Schedule (ไม่ดึง Capacity แบบ join ตรงนี้เพื่อเลี่ยง Lock ปัญหาบน NULL table)
+  // Fetch the schedule without joining capacity here, to avoid locking issues on a null table.
   const schedule = await ClassesSchedule.findByPk(scheduleId, queryOptions);
-  if (!schedule) throw new Error(`ไม่พบตารางเรียน ID ${scheduleId}`);
+  if (!schedule) {
+    const error = new Error(`ไม่พบตารางเรียน ID ${scheduleId}`);
+    error.status = 404;
+    throw error;
+  }
 
   const gymId = schedule.gyms_id;
 
-  // 1. ตรวจสอบว่ายิมปิดหรือไม่
+  // 1. Check whether the whole gym is closed
   const gymClosed = await ClassesBookingInAdvance.findOne({
     where: {
       gyms_id: gymId,
@@ -508,7 +494,7 @@ const getScheduleRealtimeAvailability = async (
     };
   }
 
-  // 2. ตรวจสอบการตั้งค่าความจุพิเศษ (Advance Config)
+  // 2. Check for an advance capacity/closure config
   const advancedConfig = await ClassesBookingInAdvance.findOne({
     where: {
       classes_schedule_id: scheduleId,
@@ -534,7 +520,7 @@ const getScheduleRealtimeAvailability = async (
     }
     maxCapacity = advancedConfig.capacity;
   } else {
-    // ใช้ความจุมาตรฐานจากฐานข้อมูล
+    // Fall back to the schedule's standard capacity
     const capacityData = await ClassesCapacity.findOne({
       where: { classes_id: scheduleId },
       transaction,
@@ -542,13 +528,13 @@ const getScheduleRealtimeAvailability = async (
     maxCapacity = capacityData?.capacity || 0;
   }
 
-  // 3. นับจำนวนที่จองไปแล้ว
+  // 3. Count seats already booked
   const currentBookingCount =
     (await ClassesBooking.sum("capacity", {
       where: {
         classes_schedule_id: scheduleId,
         date_booking: { [Op.between]: [startOfDay, endOfDay] },
-        booking_status: { [Op.notIn]: ["CANCELED", "FAILED"] },
+        booking_status: { [Op.notIn]: ACTIVE_BOOKING_STATUSES_EXCLUDED },
       },
       transaction,
     })) || 0;
@@ -564,7 +550,8 @@ const getScheduleRealtimeAvailability = async (
 };
 
 /**
- * [INTERNAL] ตรวจสอบความจุหักล้างกับการจองที่มีอยู่ (ใช้ตอนปรับ Advance Config)
+ * [INTERNAL] Checks whether an existing booking count still fits a new
+ * capacity (used when adjusting an advance config).
  */
 const _checkAvailability = async (
   startDate,
@@ -584,13 +571,21 @@ const _checkAvailability = async (
     classesScheduleId,
     lockOption,
   );
-  if (!schedule) throw new Error("ไม่พบตารางเรียน");
+  if (!schedule) {
+    const error = new Error("ไม่พบตารางเรียน");
+    error.status = 404;
+    throw error;
+  }
 
   const capacityData = await ClassesCapacity.findOne({
     where: { classes_id: classesScheduleId },
     transaction,
   });
-  if (!capacityData) throw new Error("ไม่พบข้อมูลความจุของคลาสนี้");
+  if (!capacityData) {
+    const error = new Error("ไม่พบข้อมูลความจุของคลาสนี้");
+    error.status = 404;
+    throw error;
+  }
 
   const startOfDay = dayjs(startDate).startOf("day").toDate();
   const endOfDay = dayjs(endDate).endOf("day").toDate();
@@ -600,7 +595,7 @@ const _checkAvailability = async (
       where: {
         classes_schedule_id: classesScheduleId,
         date_booking: { [Op.between]: [startOfDay, endOfDay] },
-        booking_status: { [Op.notIn]: ["CANCELED", "FAILED"] },
+        booking_status: { [Op.notIn]: ACTIVE_BOOKING_STATUSES_EXCLUDED },
       },
       transaction,
     })) || 0;
@@ -615,7 +610,7 @@ const _checkAvailability = async (
 };
 
 /**
- * [READ] ดึงข้อมูลการตั้งค่าล่วงหน้า (Advanced Schedules / Closures)
+ * [READ] Returns advance configs (closures / capacity adjustments).
  */
 const getAdvancedSchedules = async (filters = {}) => {
   const { start_date, end_date } = filters;
@@ -677,8 +672,6 @@ const getAdvancedSchedules = async (filters = {}) => {
 };
 
 const createAdvancedSchedule = async (scheduleData, performedByUser = null) => {
-  console.log("[Service] createAdvancedSchedule hit.");
-
   if (!ClassesBookingInAdvance.sequelize) {
     throw new Error("Sequelize is not initialized yet.");
   }
@@ -687,9 +680,9 @@ const createAdvancedSchedule = async (scheduleData, performedByUser = null) => {
 
   try {
     let gymsId = scheduleData.gyms_id;
-    let currentCapacity = 0; // ค่า Default สำหรับ old_capasity
+    let currentCapacity = 0; // default for old_capasity
 
-    // 1. หา gyms_id และ current capacity จาก Schedule
+    // 1. Derive gyms_id and current capacity from the schedule
     if (scheduleData.schedule_id) {
       const schedule = await ClassesSchedule.findByPk(
         scheduleData.schedule_id,
@@ -704,39 +697,37 @@ const createAdvancedSchedule = async (scheduleData, performedByUser = null) => {
 
       if (!gymsId) gymsId = schedule.gyms_id;
 
-      // ดึงค่า Capacity ปัจจุบันจากตาราง ClassesCapacity มาใส่ old_capasity
+      // Snapshot the current capacity into old_capasity, so it can be
+      // restored once this config expires.
       const capInfo = await ClassesCapacity.findOne({
         where: { classes_id: scheduleData.schedule_id },
         transaction: t,
       });
       if (capInfo) currentCapacity = capInfo.capacity;
-
-      console.log(
-        `[Service] Derived gyms_id ${gymsId} from schedule ${scheduleData.schedule_id}`,
-      );
     }
 
-    // 2. Validate Gym Closure
+    // 2. Validate gym closure input
     if (scheduleData.is_close_gym && !gymsId) {
       const error = new Error("gyms_id is required for gym closure.");
       error.status = 400;
       throw error;
     }
 
-    // 3. Validate Gym Exists
+    // 3. Validate the gym exists (and keep its name/enum for the activity log)
+    let gym = null;
     if (gymsId) {
-      const gymExist = await Gyms.count({
-        where: { id: gymsId },
+      gym = await Gyms.findByPk(gymsId, {
+        attributes: ["id", "gym_name", "gym_enum"],
         transaction: t,
       });
-      if (!gymExist) {
+      if (!gym) {
         const error = new Error("Gym not found");
         error.status = 404;
         throw error;
       }
     }
 
-    // 4. Check Availability
+    // 4. Check availability
     let warningMessage = null;
     if (!scheduleData.is_close_gym && scheduleData.schedule_id) {
       warningMessage = await _checkAvailability(
@@ -750,14 +741,14 @@ const createAdvancedSchedule = async (scheduleData, performedByUser = null) => {
       );
     }
 
-    // 5. Create Record
+    // 5. Create the record
     const newRecord = await ClassesBookingInAdvance.create(
       {
         classes_schedule_id: scheduleData.schedule_id || null,
         start_date: scheduleData.start_date,
         end_date: scheduleData.end_date,
         capacity: scheduleData.capacity,
-        old_capasity: currentCapacity, // ใช้ค่าที่ดึงมา
+        old_capasity: currentCapacity,
         is_close_gym: scheduleData.is_close_gym || false,
         gyms_id: gymsId,
         created_by:
@@ -766,7 +757,7 @@ const createAdvancedSchedule = async (scheduleData, performedByUser = null) => {
       { transaction: t },
     );
 
-    // 6. Log Activity
+    // 6. Log the action
     await activityLogService.createLog(
       {
         user_id: performedByUser?.id || null,
@@ -779,26 +770,19 @@ const createAdvancedSchedule = async (scheduleData, performedByUser = null) => {
           schedule_id: scheduleData.schedule_id,
           capacity: scheduleData.capacity,
           is_close_gym: scheduleData.is_close_gym,
+          start_date: scheduleData.start_date,
+          end_date: scheduleData.end_date,
+          gyms_id: gymsId,
+          gym_name: gym?.gym_name,
+          gym_enum: gym?.gym_enum,
         },
       },
       { transaction: t },
     );
 
-    // ✅ เรียกใช้ Helper Function
-    await _updateRealTimeCapacityIfToday(
-      newRecord.start_date,
-      newRecord.is_close_gym,
-      newRecord.classes_schedule_id,
-      newRecord.capacity,
-      performedByUser,
-      t,
-    );
+    await _applyAdvancedScheduleEffect(newRecord, t);
 
     await t.commit();
-
-    console.log("------------------------------------------");
-    console.log("[Success] Data created:", newRecord.toJSON());
-    console.log("------------------------------------------");
 
     return {
       record: newRecord,
@@ -816,12 +800,10 @@ const updateAdvancedSchedule = async (
   updateData,
   performedByUser = null,
 ) => {
-  console.log(`[Service] updateAdvancedSchedule hit for ID: ${id}`);
-
   const t = await ClassesBookingInAdvance.sequelize.transaction();
 
   try {
-    // 1. Find Record
+    // 1. Find the record
     const config = await ClassesBookingInAdvance.findByPk(id, {
       transaction: t,
     });
@@ -832,7 +814,7 @@ const updateAdvancedSchedule = async (
       throw error;
     }
 
-    // 2. Prepare Next Data
+    // 2. Prepare the next state
     const nextData = {
       start_date: updateData.start_date || config.start_date,
       end_date: updateData.end_date || config.end_date,
@@ -864,7 +846,7 @@ const updateAdvancedSchedule = async (
         throw error;
       }
 
-      // Check Availability if changed
+      // Re-check availability only if something relevant actually changed
       const isScheduleChanged =
         nextData.classes_schedule_id !== config.classes_schedule_id;
       const isDateChanged =
@@ -887,7 +869,7 @@ const updateAdvancedSchedule = async (
       }
     }
 
-    // Keep old values for log
+    // Keep old values for the log, and for reverting the old target below
     const oldValues = {
       start_date: config.start_date,
       end_date: config.end_date,
@@ -895,9 +877,10 @@ const updateAdvancedSchedule = async (
       is_close_gym: config.is_close_gym,
       classes_schedule_id: config.classes_schedule_id,
       gyms_id: config.gyms_id,
+      old_capasity: config.old_capasity,
     };
 
-    // 4. Update Database
+    // 4. Persist the update
     await config.update(
       {
         start_date: nextData.start_date,
@@ -913,7 +896,7 @@ const updateAdvancedSchedule = async (
       { transaction: t },
     );
 
-    // 5. Log Activity
+    // 5. Log the action
     await activityLogService.createLog(
       {
         user_id: performedByUser?.id || null,
@@ -930,15 +913,11 @@ const updateAdvancedSchedule = async (
       { transaction: t },
     );
 
-    // ✅ เรียกใช้ Helper Function (ใช้ config ที่ update แล้ว)
-    await _updateRealTimeCapacityIfToday(
-      config.start_date,
-      config.is_close_gym,
-      config.classes_schedule_id,
-      config.capacity,
-      performedByUser,
-      t,
-    );
+    // Clean up the OLD target first, in case this edit means it's no longer
+    // needed (e.g. no longer closing the gym, or switched to a different
+    // schedule) — then apply the NEW target's effect if it's in effect now.
+    await _revertAdvancedScheduleEffectIfNoLongerNeeded(oldValues, id, t);
+    await _applyAdvancedScheduleEffect(config, t);
 
     await t.commit();
     return config;
@@ -949,91 +928,174 @@ const updateAdvancedSchedule = async (
 };
 
 /**
- * [HELPER] อัปเดต Capacity ในตาราง ClassesCapacity ทันที หากวันที่เริ่มต้นตรงกับวันนี้
- * @param {Date|string} startDate - วันที่เริ่มต้นของการตั้งค่าพิเศษ
- * @param {boolean} isCloseGym - เป็นการปิดยิมหรือไม่
- * @param {number} scheduleId - ID ของตารางเรียน (ถ้ามี)
- * @param {number} capacity - ความจุใหม่ที่ต้องการตั้งค่า
- * @param {object} performedByUser - ข้อมูลผู้ใช้งานที่ดำเนินการ
- * @param {object} t - Sequelize Transaction
+ * [HELPER] Whether a config's own date range currently covers "now", using
+ * the same 07:00 anchor convention as getScheduleRealtimeAvailability.
  */
-const _updateRealTimeCapacityIfToday = async (
-  startDate,
-  isCloseGym,
-  scheduleId,
-  capacity,
-  performedByUser,
-  t,
+const _isConfigCurrentlyInEffect = (config, checkTime = _getDateRange(new Date()).checkTime) => {
+  return config.start_date <= checkTime && config.end_date >= checkTime;
+};
+
+/**
+ * [HELPER] Applies a config's effect immediately if it's currently in
+ * effect (covers its whole date range, not just its start day), instead of
+ * waiting for the nightly cron job — covers both gym closures
+ * (ClassesSchedule.is_active) and capacity overrides (ClassesCapacity.capacity).
+ */
+const _applyAdvancedScheduleEffect = async (config, transaction) => {
+  if (!_isConfigCurrentlyInEffect(config)) return;
+
+  if (config.is_close_gym) {
+    await ClassesSchedule.update(
+      { is_active: false },
+      { where: { gyms_id: config.gyms_id }, transaction },
+    );
+    return;
+  }
+
+  if (config.classes_schedule_id) {
+    await ClassesCapacity.update(
+      { capacity: config.capacity },
+      { where: { classes_id: config.classes_schedule_id }, transaction },
+    );
+  }
+};
+
+/**
+ * [HELPER] After a config is deleted or edited away, checks whether some
+ * OTHER still-active config justifies keeping the gym/schedule closed or
+ * capacity-adjusted — if not, restores it to normal. Only acts when
+ * `previousConfig` was itself currently in effect; if it never took effect
+ * (e.g. scheduled for the future) there's nothing to undo.
+ *
+ * Without this, deleting or editing away a config that HAD already taken
+ * effect left the gym/schedule stuck closed/adjusted forever — the only
+ * other place that reverts anything is the nightly cron job, and only for a
+ * config whose end_date naturally arrives while the row still exists.
+ *
+ * @param {object} previousConfig - the config's state before this delete/edit
+ * @param {string|number} excludeId - previousConfig's own row ID, excluded
+ *   from the "is something else still active" check
+ */
+const _revertAdvancedScheduleEffectIfNoLongerNeeded = async (
+  previousConfig,
+  excludeId,
+  transaction,
 ) => {
-  try {
-    const todayStr = new Date().toISOString().split("T")[0];
-    // แปลง startDate เป็น string (รองรับทั้ง Date object และ string)
-    const startStr = new Date(startDate).toISOString().split("T")[0];
+  const { checkTime } = _getDateRange(new Date());
+  if (!_isConfigCurrentlyInEffect(previousConfig, checkTime)) return;
 
-    // เงื่อนไข: วันที่ตรงกับวันนี้ + ไม่ใช่การปิดยิม + มี schedule_id
-    if (startStr === todayStr && !isCloseGym && scheduleId) {
-      console.log(
-        `[Auto Update] Start date (${startStr}) is TODAY. Updating ClassesCapacity...`,
-      );
+  if (previousConfig.is_close_gym) {
+    const stillClosed = await ClassesBookingInAdvance.count({
+      where: {
+        id: { [Op.ne]: excludeId },
+        gyms_id: previousConfig.gyms_id,
+        is_close_gym: true,
+        start_date: { [Op.lte]: checkTime },
+        end_date: { [Op.gte]: checkTime },
+      },
+      transaction,
+    });
 
-      const userName =
-        performedByUser?.name || performedByUser?.username || "ADMIN";
-
-      await ClassesCapacity.update(
-        {
-          capacity: capacity,
-          updated_by: userName,
-        },
-        {
-          where: { classes_id: scheduleId },
-          transaction: t, // 🔥 สำคัญมาก: ต้องใช้ transaction เดียวกัน
-        },
+    if (!stillClosed) {
+      await ClassesSchedule.update(
+        { is_active: true },
+        { where: { gyms_id: previousConfig.gyms_id }, transaction },
       );
     }
-  } catch (error) {
-    console.error(
-      "[Helper Error] Failed to auto-update capacity:",
-      error.message,
-    );
-    throw error;
+    return;
+  }
+
+  if (previousConfig.classes_schedule_id) {
+    const stillOverridden = await ClassesBookingInAdvance.count({
+      where: {
+        id: { [Op.ne]: excludeId },
+        classes_schedule_id: previousConfig.classes_schedule_id,
+        is_close_gym: false,
+        capacity: { [Op.not]: null },
+        start_date: { [Op.lte]: checkTime },
+        end_date: { [Op.gte]: checkTime },
+      },
+      transaction,
+    });
+
+    if (!stillOverridden) {
+      await ClassesCapacity.update(
+        { capacity: previousConfig.old_capasity },
+        { where: { classes_id: previousConfig.classes_schedule_id }, transaction },
+      );
+    }
   }
 };
 
 /**
- * [DELETE] ลบการตั้งค่าพิเศษ
+ * [DELETE] Deletes an advance config, first restoring is_active/capacity to
+ * normal if nothing else still justifies keeping the gym/schedule
+ * closed/adjusted once this row is gone.
  */
 const deleteAdvancedSchedule = async (id, performedByUser = null) => {
-  const config = await ClassesBookingInAdvance.findByPk(id);
-  if (!config) {
-    const error = new Error(`ไม่พบข้อมูลการตั้งค่าพิเศษ ID ${id}`);
-    error.status = 404;
+  const t = await ClassesBookingInAdvance.sequelize.transaction();
+
+  try {
+    const config = await ClassesBookingInAdvance.findByPk(id, {
+      transaction: t,
+    });
+    if (!config) {
+      const error = new Error(`ไม่พบข้อมูลการตั้งค่าพิเศษ ID ${id}`);
+      error.status = 404;
+      throw error;
+    }
+
+    await _revertAdvancedScheduleEffectIfNoLongerNeeded(config, id, t);
+
+    const gym = config.gyms_id
+      ? await Gyms.findByPk(config.gyms_id, {
+          attributes: ["id", "gym_name", "gym_enum"],
+          transaction: t,
+        })
+      : null;
+
+    await activityLogService.createLog({
+      user_id: performedByUser?.id || null,
+      user_name: performedByUser?.name || performedByUser?.username || "ADMIN",
+      service: "SCHEDULE",
+      action: "DELETE_ADVANCED",
+      details: {
+        advanced_id: id,
+        schedule_id: config.classes_schedule_id,
+        capacity: config.capacity,
+        is_close_gym: config.is_close_gym,
+        start_date: config.start_date,
+        end_date: config.end_date,
+        gyms_id: config.gyms_id,
+        gym_name: gym?.gym_name,
+        gym_enum: gym?.gym_enum,
+      },
+    });
+
+    await config.destroy({ transaction: t });
+
+    await t.commit();
+
+    cacheUtil.clearByPrefix("availability");
+
+    return { message: "ลบการตั้งค่าพิเศษสำเร็จ" };
+  } catch (error) {
+    if (t) await t.rollback();
+    console.error("[Service Error] Failed to delete advanced schedule:", error.message);
     throw error;
   }
-
-  await activityLogService.createLog({
-    user_id: performedByUser?.id || null,
-    user_name: performedByUser?.name || performedByUser?.username || "ADMIN",
-    service: "SCHEDULE",
-    action: "DELETE_ADVANCED",
-    details: { advanced_id: id },
-  });
-
-  await config.destroy();
-
-  // ✅ Invalidate Cache
-  cacheUtil.clearByPrefix("availability");
-
-  return { message: "ลบการตั้งค่าพิเศษสำเร็จ" };
 };
 
 /**
- * [ACTION] บังคับให้ระบบประมวลผลการจองล่วงหน้าทันที (Manual Trigger Job)
+ * [ACTION] Manually triggers the advance-schedule cron job's logic on demand.
+ * Note: currently has no live HTTP route calling it — kept exported for
+ * manual/administrative use (e.g. via a script), see job/advancedScheduleJob.js.
  */
 const activeScheduleInAdvance = async () => {
   return await advancedScheduleJob.runAdvancedScheduleJob();
 };
 // =================================================================
-// 3. EXPORTS
+// 4. EXPORTS
 // =================================================================
 
 module.exports = {
@@ -1047,6 +1109,6 @@ module.exports = {
   getAdvancedSchedules,
   updateAdvancedSchedule,
   deleteAdvancedSchedule,
-  getScheduleRealtimeAvailability, // Export Shared Logic
+  getScheduleRealtimeAvailability, // shared logic, also used by classesBookingService
   activeScheduleInAdvance,
 };

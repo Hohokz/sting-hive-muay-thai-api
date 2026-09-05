@@ -1,7 +1,8 @@
 const activityLogService = require("../services/activityLogService");
+const { sendError } = require("../utils/httpError");
 
 /**
- * [GET] ดึงรายการ Activity Log ทั้งหมด (พร้อม Filters)
+ * [GET] Returns activity logs (with filters)
  */
 exports.getActivityLogs = async (req, res) => {
   try {
@@ -13,11 +14,7 @@ exports.getActivityLogs = async (req, res) => {
       total: logs.total,
     });
   } catch (error) {
-    console.error("[ActivityLogController] getActivityLogs Error:", error);
-    res.status(500).json({
-      success: false,
-      message: "ไม่สามารถดึงข้อมูล Activity Log ได้",
-    });
+    sendError(res, error, "ไม่สามารถดึงข้อมูล Activity Log ได้");
   }
 };
 
@@ -25,16 +22,55 @@ exports.exportLogsToCSV = async (req, res) => {
   try {
     const { csv, filename } = await activityLogService.exportLogsToCSV(
       req.query,
+      req.user,
     );
 
     res.setHeader("Content-Type", "text/csv");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     res.status(200).send(csv);
   } catch (error) {
-    console.error("[ActivityLogController] exportLogsToCSV Error:", error);
-    res.status(500).json({
-      success: false,
-      message: "ไม่สามารถ export ข้อมูล Activity Log ได้",
+    sendError(res, error, "ไม่สามารถ export ข้อมูล Activity Log ได้");
+  }
+};
+
+exports.getAvailableExportMonths = async (req, res) => {
+  try {
+    const months = await activityLogService.getAvailableExportMonths();
+    res.status(200).json({ success: true, data: months });
+  } catch (error) {
+    sendError(res, error, "ไม่สามารถดึงข้อมูลเดือนที่ export ได้");
+  }
+};
+
+exports.getExportedMonths = async (req, res) => {
+  try {
+    const months = await activityLogService.getExportedMonths();
+    res.status(200).json({ success: true, data: months });
+  } catch (error) {
+    sendError(res, error, "ไม่สามารถดึงข้อมูลเดือนที่ export แล้วได้");
+  }
+};
+
+exports.previewPurgeLogs = async (req, res) => {
+  try {
+    const { month } = req.query;
+    const count = await activityLogService.previewPurgeLogsByMonth(month);
+    res.status(200).json({ success: true, data: { count } });
+  } catch (error) {
+    sendError(res, error, "ไม่สามารถตรวจสอบจำนวนข้อมูลที่จะลบได้");
+  }
+};
+
+exports.purgeLogs = async (req, res) => {
+  try {
+    const { month } = req.query;
+    const result = await activityLogService.purgeLogsByMonth(month, req.user);
+    res.status(200).json({
+      success: true,
+      message: `ลบ Activity Log เดือน ${month} สำเร็จ (${result.deletedCount} รายการ)`,
+      data: result,
     });
+  } catch (error) {
+    sendError(res, error, "ไม่สามารถลบข้อมูล Activity Log ได้");
   }
 };

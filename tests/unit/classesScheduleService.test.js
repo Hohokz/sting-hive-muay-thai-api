@@ -113,9 +113,15 @@ describe('ClassesScheduleService', () => {
       };
       
       ClassesSchedule.findAll.mockResolvedValue([mockSchedule]);
-      ClassesBookingInAdvance.findAll.mockResolvedValue([]); // No gym closures
-      ClassesBooking.findAll.mockResolvedValue([]); // No bookings
-      
+      // getScheduleRealtimeAvailability (called internally per schedule) looks
+      // the schedule back up by PK and reads capacity from ClassesCapacity —
+      // it deliberately doesn't reuse mockSchedule.capacity_data (see the
+      // "avoid locking issues on a null table" comment in the service).
+      ClassesSchedule.findByPk.mockResolvedValue(mockSchedule);
+      ClassesBookingInAdvance.findOne.mockResolvedValue(null); // No gym closure or advance config
+      ClassesCapacity.findOne.mockResolvedValue({ capacity: 10 });
+      ClassesBooking.sum.mockResolvedValue(0); // No bookings yet
+
       const result = await classesScheduleService.getAvailableSchedulesByBookingDate('2024-03-05', 'STING_CLUB');
 
       expect(result).toHaveLength(1);

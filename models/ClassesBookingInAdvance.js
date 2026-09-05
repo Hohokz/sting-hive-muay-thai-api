@@ -9,10 +9,10 @@ const ClassesBookingInAdvance = sequelize.define(
       defaultValue: DataTypes.UUIDV4,
       primaryKey: true,
     },
-    // FK 1: ClassesSchedule (nullable สำหรับกรณีปิดยิมทั้งยิม)
+    // FK 1: ClassesSchedule (nullable when this config closes the whole gym)
     classes_schedule_id: {
       type: DataTypes.UUID,
-      allowNull: true, // nullable เพราะกรณีปิดยิมทั้งยิมไม่ต้องระบุ schedule
+      allowNull: true, // nullable because a whole-gym closure has no single schedule
       references: { model: "classes_schedule", key: "id" },
     },
     start_date: { type: DataTypes.DATE(6) },
@@ -23,7 +23,8 @@ const ClassesBookingInAdvance = sequelize.define(
       defaultValue: false,
     },
     capacity: { type: DataTypes.INTEGER, allowNull: true },
-    old_capasity:{type: DataTypes.INTEGER, allowNull: true},
+    // TODO(tech-debt): column name has a typo ("capasity"); renaming needs a migration.
+    old_capasity: { type: DataTypes.INTEGER, allowNull: true },
     gyms_id: {
       type: DataTypes.INTEGER,
       allowNull: false,

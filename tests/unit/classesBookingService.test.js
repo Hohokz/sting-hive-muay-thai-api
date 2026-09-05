@@ -85,6 +85,7 @@ describe('ClassesBookingService', () => {
       const bookingData = {
         classes_schedule_id: 1,
         client_name: 'Test Customer',
+        client_email: 'test@example.com',
         capacity: 5,
         date_booking: '2026-12-01'
       };

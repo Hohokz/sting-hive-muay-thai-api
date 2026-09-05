@@ -1,13 +1,13 @@
-// สมมติว่าไฟล์นี้จะถูกเรียกใช้หลังจากการกำหนดโมเดลทั้งหมด
-const { sequelize } = require('../config/db'); 
+// This file is expected to be required after all models are defined.
+const { sequelize } = require('../config/db');
 
 // -----------------------------------------------------------
-// 1. IMPORT โมเดลทั้งหมด (ต้องแน่ใจว่าได้ Import โมเดลอย่างถูกต้อง)
+// 1. IMPORT all models (make sure every model is imported correctly)
 // -----------------------------------------------------------
 const User = require('./User');
 const Gyms = require('./Gyms');
 const ClassesSchedule = require('./ClassesSchedule');
-const ClassesCapacity = require('./ClassesCapacity')(sequelize); 
+const ClassesCapacity = require('./ClassesCapacity')(sequelize);
 const ClassesBooking = require('./ClassesBooking');
 const ClassesBookingInAdvance = require('./ClassesBookingInAdvance');
 const Payment = require('./Payment');
@@ -17,19 +17,19 @@ const TrainerGyms = require('./TrainerGyms');
 
 
 // -----------------------------------------------------------
-// 2. กำหนดความสัมพันธ์ (Define Associations)
+// 2. Define associations
 // -----------------------------------------------------------
 
 // A. ClassesSchedule <-> ClassesCapacity (One-to-One)
-// Schedule หนึ่งรายการ มี Capacity หนึ่งรายการ
+// One schedule has one capacity record
 ClassesSchedule.hasOne(ClassesCapacity, {
-    foreignKey: 'classes_id',    
-    as: 'capacity_data',         
-    onDelete: 'CASCADE'          
+    foreignKey: 'classes_id',
+    as: 'capacity_data',
+    onDelete: 'CASCADE'
 });
 ClassesCapacity.belongsTo(ClassesSchedule, {
     foreignKey: 'classes_id',
-    as: 'schedule'               
+    as: 'schedule'
 });
 
 Gyms.hasMany(ClassesSchedule, {
@@ -51,7 +51,7 @@ ClassesBooking.belongsTo(Gyms, {
 });
 
 // B. ClassesSchedule <-> ClassesBooking (One-to-Many)
-// Schedule หนึ่งรายการ สามารถมีการจองหลายรายการ
+// One schedule can have many bookings
 ClassesSchedule.hasMany(ClassesBooking, {
     foreignKey: 'classes_schedule_id',
     as: 'bookings'
@@ -61,8 +61,8 @@ ClassesBooking.belongsTo(ClassesSchedule, {
     as: 'schedule'
 });
 
-// B. ClassesSchedule <-> ClassesBookingInAdvance (One-to-Many)
-// Schedule หนึ่งรายการ สามารถมีการจองหลายรายการ
+// C. ClassesSchedule <-> ClassesBookingInAdvance (One-to-Many)
+// One schedule can have many advance-booking configs
 ClassesSchedule.hasMany(ClassesBookingInAdvance, {
     foreignKey: 'classes_schedule_id',
     as: 'bookings_in_advance'
@@ -72,26 +72,27 @@ ClassesBookingInAdvance.belongsTo(ClassesSchedule, {
     as: 'schedule'
 });
 
-// C. ClassesBooking <-> Payment (One-to-One)
-// การจองหนึ่งรายการ ผูกกับการชำระเงินหนึ่งรายการ
-ClassesBooking.hasOne(Payment, { 
-    foreignKey: 'booking_id', 
-    as: 'payment_detail', 
-    onDelete: 'CASCADE' 
+// D. ClassesBooking <-> Payment (One-to-One)
+// One booking is tied to one payment record
+ClassesBooking.hasOne(Payment, {
+    foreignKey: 'booking_id',
+    as: 'payment_detail',
+    onDelete: 'CASCADE'
 });
-Payment.belongsTo(ClassesBooking, { 
-    foreignKey: 'booking_id', 
-    as: 'booking' 
+Payment.belongsTo(ClassesBooking, {
+    foreignKey: 'booking_id',
+    as: 'booking'
 });
 
 
-// D. User <-> ClassesBooking (One-to-Many)
-// User (ลูกค้า) หนึ่งคน สามารถจองได้หลายรายการ (ถ้าคุณมีคอลัมน์ user_id ใน ClassesBooking)
-// สมมติว่า ClassesBooking มีคอลัมน์ 'user_id'
+// E. User <-> ClassesBooking (One-to-Many)
+// Not wired up: ClassesBooking has no user_id column today, so a customer's
+// bookings can't be joined back to a User row. Would need a migration to add
+// the FK before this association could be enabled.
 // User.hasMany(ClassesBooking, { foreignKey: 'user_id', as: 'user_bookings' });
 // ClassesBooking.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
 
-// E. User <-> ActivityLog (One-to-Many)
+// F. User <-> ActivityLog (One-to-Many)
 User.hasMany(ActivityLog, {
     foreignKey: 'user_id',
     as: 'activity_logs'
@@ -101,7 +102,7 @@ ActivityLog.belongsTo(User, {
     as: 'user'
 });
 
-// F. User <-> Gyms (Many-to-Many via TrainerGyms)
+// G. User <-> Gyms (Many-to-Many via TrainerGyms)
 User.belongsToMany(Gyms, {
     through: TrainerGyms,
     foreignKey: 'user_id',
@@ -122,7 +123,7 @@ TrainerGyms.belongsTo(Gyms, { foreignKey: 'gyms_id', as: 'gym' });
 
 
 // -----------------------------------------------------------
-// 3. EXPORT โมเดลทั้งหมด
+// 3. EXPORT all models
 // -----------------------------------------------------------
 
 module.exports = {
