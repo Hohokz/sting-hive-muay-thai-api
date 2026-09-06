@@ -75,6 +75,26 @@ router.put(
   extractUserIfPresent,
   bookingController.updateBookingPayment,
 );
+router.get(
+  "/:id/payment",
+  extractUserIfPresent,
+  bookingController.getBookingPaymentDetail,
+);
+// PUT /api/v1/bookings/payment-entry/:entryId — edits one payment-history
+// entry in place (registered before the "/:name" wildcard below, since
+// literal 2-segment routes never collide with it, but kept alongside the
+// other payment routes for readability).
+router.put(
+  "/payment-entry/:entryId",
+  extractUserIfPresent,
+  bookingController.updateBookingPaymentEntry,
+);
+// DELETE /api/v1/bookings/payment-entry/:entryId
+router.delete(
+  "/payment-entry/:entryId",
+  extractUserIfPresent,
+  bookingController.deleteBookingPaymentEntry,
+);
 router.patch(
   "/:id/note",
   extractUserIfPresent,

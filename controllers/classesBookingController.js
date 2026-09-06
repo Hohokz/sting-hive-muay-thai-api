@@ -121,17 +121,24 @@ exports.updateBookingTrainer = async (req, res) => {
 };
 
 /**
- * [PATCH] Updates a booking's payment status
+ * [PATCH] Updates a booking's payment status, and (when marking as paid)
+ * its rent/course amount breakdown and payment method.
  */
 exports.updateBookingPayment = async (req, res) => {
   try {
     const { id } = req.params;
-    const payment_status = req.body.is_paid;
+    const { is_paid, payment_method_id, rent_amount, course_amount, quantity } = req.body;
     const performedByUser = req.user;
 
     const result = await classesBookingService.updateBookingPayment(
       id,
-      payment_status,
+      {
+        payment_status: is_paid,
+        payment_method_id,
+        rent_amount,
+        course_amount,
+        quantity,
+      },
       performedByUser,
     );
 
@@ -141,6 +148,60 @@ exports.updateBookingPayment = async (req, res) => {
     });
   } catch (error) {
     sendError(res, error, "ไม่สามารถอัปเดตสถานะการชำระเงินได้");
+  }
+};
+
+/**
+ * [GET] Returns a booking's saved payment breakdown (or null), so the
+ * payment popup can pre-fill its fields when re-opened for editing.
+ */
+exports.getBookingPaymentDetail = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const detail = await classesBookingService.getBookingPaymentDetail(id);
+    res.status(200).json({ success: true, data: detail });
+  } catch (error) {
+    sendError(res, error, "ไม่สามารถดึงข้อมูลรายละเอียดการชำระเงินได้");
+  }
+};
+
+/**
+ * [PUT] Edits one existing payment-history entry in place.
+ */
+exports.updateBookingPaymentEntry = async (req, res) => {
+  try {
+    const { entryId } = req.params;
+    const { payment_method_id, rent_amount, course_amount } = req.body;
+    const performedByUser = req.user;
+
+    const result = await classesBookingService.updateBookingPaymentEntry(
+      entryId,
+      { payment_method_id, rent_amount, course_amount },
+      performedByUser,
+    );
+
+    res.status(200).json({ success: true, message: result.message });
+  } catch (error) {
+    sendError(res, error, "ไม่สามารถแก้ไขรายการชำระเงินได้");
+  }
+};
+
+/**
+ * [DELETE] Permanently removes one payment-history entry.
+ */
+exports.deleteBookingPaymentEntry = async (req, res) => {
+  try {
+    const { entryId } = req.params;
+    const performedByUser = req.user;
+
+    const result = await classesBookingService.deleteBookingPaymentEntry(
+      entryId,
+      performedByUser,
+    );
+
+    res.status(200).json({ success: true, message: result.message });
+  } catch (error) {
+    sendError(res, error, "ไม่สามารถลบรายการชำระเงินได้");
   }
 };
 

@@ -87,6 +87,7 @@ app.use("/api/v1/bookings", require("./routes/classesBookingRoutes"));
 app.use("/api/v1/dashboard", require("./routes/dashBoardRoutes"));
 app.use("/api/v1/activity-logs", require("./routes/activityLogRoutes"));
 app.use("/api/v1/trainer-gyms", require("./routes/trainerGymRoutes"));
+app.use("/api/v1/payments", require("./routes/paymentRoutes"));
 
 // Health Check Endpoint
 app.get("/", (req, res) => {

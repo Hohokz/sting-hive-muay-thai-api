@@ -13,6 +13,8 @@ const ClassesBookingInAdvance = require('./ClassesBookingInAdvance');
 const Payment = require('./Payment');
 const ActivityLog = require('./ActivityLog');
 const TrainerGyms = require('./TrainerGyms');
+const PaymentMethod = require('./PaymentMethod');
+const BookingPayment = require('./BookingPayment');
 
 
 
@@ -120,6 +122,29 @@ Gyms.belongsToMany(User, {
 TrainerGyms.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
 TrainerGyms.belongsTo(Gyms, { foreignKey: 'gyms_id', as: 'gym' });
 
+// H. ClassesBooking <-> BookingPayment (One-to-Many)
+// A booking can have multiple payment entries over time (e.g. rent paid one
+// week, course fee paid later) — a payment history, not a single record.
+ClassesBooking.hasMany(BookingPayment, {
+    foreignKey: 'classes_booking_id',
+    as: 'payment_records',
+    onDelete: 'CASCADE'
+});
+BookingPayment.belongsTo(ClassesBooking, {
+    foreignKey: 'classes_booking_id',
+    as: 'booking'
+});
+
+// I. PaymentMethod <-> BookingPayment (One-to-Many)
+PaymentMethod.hasMany(BookingPayment, {
+    foreignKey: 'payment_method_id',
+    as: 'booking_payments'
+});
+BookingPayment.belongsTo(PaymentMethod, {
+    foreignKey: 'payment_method_id',
+    as: 'payment_method'
+});
+
 
 
 // -----------------------------------------------------------
@@ -136,4 +161,6 @@ module.exports = {
     Payment,
     ActivityLog,
     TrainerGyms,
+    PaymentMethod,
+    BookingPayment,
 };
