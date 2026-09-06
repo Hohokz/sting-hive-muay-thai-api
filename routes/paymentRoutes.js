@@ -20,5 +20,7 @@ router.put("/methods/:id", paymentController.updatePaymentMethod);
 router.get("/summary", paymentController.getPaymentSummary);
 // GET /api/v1/payments/summary/export?period=...&value=... — same period, as .xlsx
 router.get("/summary/export", paymentController.exportPaymentSummary);
+// GET /api/v1/payments/summary/class/:scheduleId?period=...&value=...&gym=...
+router.get("/summary/class/:scheduleId", paymentController.getClassPaymentDetails);
 
 module.exports = router;

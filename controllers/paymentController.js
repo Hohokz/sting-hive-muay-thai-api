@@ -54,12 +54,14 @@ exports.updatePaymentMethod = async (req, res) => {
  * both by payment method and by class. `?period=day|week|month|year` picks
  * the granularity and `?value=...` is the matching date value (as produced
  * by the matching HTML date input — see paymentService's
- * `_getRangeForPeriod` for the exact expected shape per period).
+ * `_getRangeForPeriod` for the exact expected shape per period). Optional
+ * `?gym=STING_HIVE|STING_CLUB` scopes to one branch; omitted means every
+ * branch combined.
  */
 exports.getPaymentSummary = async (req, res) => {
   try {
-    const { period, value } = req.query;
-    const summary = await paymentService.getPaymentSummary({ period, value });
+    const { period, value, gym } = req.query;
+    const summary = await paymentService.getPaymentSummary({ period, value, gym });
     res.status(200).json({ success: true, data: summary });
   } catch (error) {
     sendError(res, error, "ไม่สามารถดึงข้อมูลสรุปยอดชำระเงินได้");
@@ -67,15 +69,15 @@ exports.getPaymentSummary = async (req, res) => {
 };
 
 /**
- * [GET] Exports the current period (same `?period=...&value=...` as the
- * summary above) to an .xlsx workbook — every payment entry, plus the
+ * [GET] Exports the current period (same `?period=...&value=...&gym=...` as
+ * the summary above) to an .xlsx workbook — every payment entry, plus the
  * by-method/by-class totals.
  */
 exports.exportPaymentSummary = async (req, res) => {
   try {
-    const { period, value } = req.query;
+    const { period, value, gym } = req.query;
     const { data, filename, contentType } = await paymentService.exportPaymentSummary(
-      { period, value },
+      { period, value, gym },
       req.user,
     );
 
@@ -84,5 +86,26 @@ exports.exportPaymentSummary = async (req, res) => {
     res.send(data);
   } catch (error) {
     sendError(res, error, "เกิดข้อผิดพลาดในการส่งออกข้อมูล");
+  }
+};
+
+/**
+ * [GET] Returns every individual payment entry for one class (schedule),
+ * within the same period/branch as the summary — the By Class table's
+ * click-to-drill-down.
+ */
+exports.getClassPaymentDetails = async (req, res) => {
+  try {
+    const { scheduleId } = req.params;
+    const { period, value, gym } = req.query;
+    const details = await paymentService.getClassPaymentDetails({
+      period,
+      value,
+      gym,
+      scheduleId,
+    });
+    res.status(200).json({ success: true, data: details });
+  } catch (error) {
+    sendError(res, error, "ไม่สามารถดึงข้อมูลรายละเอียดของคลาสได้");
   }
 };

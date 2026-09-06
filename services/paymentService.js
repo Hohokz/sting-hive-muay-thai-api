@@ -2,6 +2,7 @@ const { sequelize } = require("../config/db");
 const { PaymentMethod } = require("../models/Associations");
 const activityLogService = require("./activityLogService");
 const { getMonthRange } = require("../utils/monthGuard");
+const { GYM_ENUM } = require("../models/Enums");
 const ExcelJS = require("exceljs");
 
 const dayjs = require("dayjs");
@@ -69,6 +70,21 @@ const _getRangeForPeriod = (period, value) => {
   const error = new Error(`ช่วงเวลาไม่ถูกต้อง: ${period} (ต้องเป็น day, week, month หรือ year)`);
   error.status = 400;
   throw error;
+};
+
+/**
+ * Validates an optional gym/branch filter — undefined/empty means "every
+ * branch", anything else must be a real GYM_ENUM value.
+ */
+const _assertValidGym = (gym) => {
+  if (!gym) return;
+  if (!Object.values(GYM_ENUM).includes(gym)) {
+    const error = new Error(
+      `สาขาไม่ถูกต้อง: ${gym} (ต้องเป็น ${Object.values(GYM_ENUM).join(" หรือ ")})`,
+    );
+    error.status = 400;
+    throw error;
+  }
 };
 
 /**
@@ -171,10 +187,12 @@ const _sumEntries = (rows) =>
  * [READ] Totals rent/course amounts collected for one day/week/month/year
  * (by the booking's own date_booking, same as the bookings export),
  * grouped two ways: by payment method, and by class (the specific
- * schedule slot a booking was for — gym + time + private/group).
+ * schedule slot a booking was for — gym + time + private/group). Optionally
+ * scoped to one branch (`gym`) — omitting it summarizes every branch.
  */
-const getPaymentSummary = async ({ period, value } = {}) => {
+const getPaymentSummary = async ({ period, value, gym } = {}) => {
   const { start, end } = _getRangeForPeriod(period, value);
+  _assertValidGym(gym);
 
   const [methodRows] = await sequelize.query(
     `
@@ -186,12 +204,14 @@ const getPaymentSummary = async ({ period, value } = {}) => {
       COALESCE(SUM(bp.course_amount), 0)::float AS total_course
     FROM booking_payments bp
     JOIN classes_booking cb ON cb.id = bp.classes_booking_id
+    JOIN classes_schedule cs ON cs.id = cb.classes_schedule_id
     LEFT JOIN payment_methods pm ON pm.id = bp.payment_method_id
     WHERE cb.date_booking >= :start AND cb.date_booking < :end
+      AND (:gym::text IS NULL OR cs.gym_enum = :gym)
     GROUP BY pm.id, pm.name
     ORDER BY pm.name ASC NULLS LAST;
     `,
-    { replacements: { start, end } },
+    { replacements: { start, end, gym: gym || null } },
   );
 
   const [classRows] = await sequelize.query(
@@ -209,10 +229,11 @@ const getPaymentSummary = async ({ period, value } = {}) => {
     JOIN classes_booking cb ON cb.id = bp.classes_booking_id
     JOIN classes_schedule cs ON cs.id = cb.classes_schedule_id
     WHERE cb.date_booking >= :start AND cb.date_booking < :end
+      AND (:gym::text IS NULL OR cs.gym_enum = :gym)
     GROUP BY cs.id, cs.gym_enum, cs.start_time, cs.end_time, cs.is_private_class
     ORDER BY cs.gym_enum ASC, cs.start_time ASC;
     `,
-    { replacements: { start, end } },
+    { replacements: { start, end, gym: gym || null } },
   );
 
   const byMethod = methodRows.map((r) => ({
@@ -246,6 +267,7 @@ const getPaymentSummary = async ({ period, value } = {}) => {
   return {
     period,
     value,
+    gym: gym || null,
     by_method: byMethod,
     by_class: byClass,
     totals: { ...totals, total_amount: totals.total_rent + totals.total_course },
@@ -257,10 +279,11 @@ const _formatGymName = (gymEnum) =>
 
 /**
  * Fetches every individual payment entry in the range (not aggregated) —
- * the "Details" sheet of the export, since the on-screen tables only show
- * aggregates.
+ * used both for the export's "Details" sheet (no scheduleId) and for the
+ * By Class table's click-to-drill-down (scheduleId scopes it to just that
+ * one class).
  */
-const _fetchPaymentDetailsForExport = async (start, end) => {
+const _fetchPaymentDetailsForExport = async (start, end, gym, scheduleId) => {
   const [rows] = await sequelize.query(
     `
     SELECT
@@ -279,9 +302,11 @@ const _fetchPaymentDetailsForExport = async (start, end) => {
     JOIN classes_schedule cs ON cs.id = cb.classes_schedule_id
     LEFT JOIN payment_methods pm ON pm.id = bp.payment_method_id
     WHERE cb.date_booking >= :start AND cb.date_booking < :end
+      AND (:gym::text IS NULL OR cs.gym_enum = :gym)
+      AND (:scheduleId::uuid IS NULL OR cs.id = :scheduleId)
     ORDER BY cb.date_booking ASC, bp.created_date ASC;
     `,
-    { replacements: { start, end } },
+    { replacements: { start, end, gym: gym || null, scheduleId: scheduleId || null } },
   );
 
   return rows.map((r) => ({
@@ -300,16 +325,34 @@ const _fetchPaymentDetailsForExport = async (start, end) => {
 };
 
 /**
+ * [READ] Returns every individual payment entry for one specific class
+ * (schedule) within the given period/branch — the drill-down shown when
+ * clicking a row in the Payment Summary page's By Class table.
+ */
+const getClassPaymentDetails = async ({ period, value, gym, scheduleId }) => {
+  const { start, end } = _getRangeForPeriod(period, value);
+  _assertValidGym(gym);
+  if (!scheduleId) {
+    const error = new Error("กรุณาระบุคลาสที่ต้องการดูรายละเอียด");
+    error.status = 400;
+    throw error;
+  }
+  return _fetchPaymentDetailsForExport(start, end, gym, scheduleId);
+};
+
+/**
  * [EXPORT] Exports the Payment Summary page's current period (whichever
  * Day/Week/Month/Year tab is selected) to an .xlsx workbook: every
  * individual payment entry, plus the same by-method and by-class totals
- * shown on screen.
+ * shown on screen. Optionally scoped to one branch (`gym`), same as
+ * getPaymentSummary.
  */
-const exportPaymentSummary = async ({ period, value }, performedByUser = null) => {
+const exportPaymentSummary = async ({ period, value, gym }, performedByUser = null) => {
   const { start, end } = _getRangeForPeriod(period, value);
+  _assertValidGym(gym);
   const [summary, details] = await Promise.all([
-    getPaymentSummary({ period, value }),
-    _fetchPaymentDetailsForExport(start, end),
+    getPaymentSummary({ period, value, gym }),
+    _fetchPaymentDetailsForExport(start, end, gym),
   ]);
 
   const workbook = new ExcelJS.Workbook();
@@ -382,14 +425,14 @@ const exportPaymentSummary = async ({ period, value }, performedByUser = null) =
   }).font = { bold: true };
 
   const buffer = await workbook.xlsx.writeBuffer();
-  const filename = `payment_summary_${period}_${value}.xlsx`;
+  const filename = `payment_summary_${period}_${value}${gym ? `_${gym}` : ""}.xlsx`;
 
   await activityLogService.createLog({
     user_id: performedByUser?.id || null,
     user_name: performedByUser?.name || performedByUser?.username || "ADMIN",
     service: LOG_SERVICE,
     action: "EXPORT_PAYMENT_SUMMARY",
-    details: { period, value },
+    details: { period, value, gym: gym || null },
   });
 
   return {
@@ -406,4 +449,5 @@ module.exports = {
   updatePaymentMethod,
   getPaymentSummary,
   exportPaymentSummary,
+  getClassPaymentDetails,
 };
