@@ -122,12 +122,13 @@ exports.updateBookingTrainer = async (req, res) => {
 
 /**
  * [PATCH] Updates a booking's payment status, and (when marking as paid)
- * its rent/course amount breakdown and payment method.
+ * its rent/course/other amount breakdown and payment method.
  */
 exports.updateBookingPayment = async (req, res) => {
   try {
     const { id } = req.params;
-    const { is_paid, payment_method_id, rent_amount, course_amount, quantity } = req.body;
+    const { is_paid, payment_method_id, rent_amount, course_amount, other_amount, quantity } =
+      req.body;
     const performedByUser = req.user;
 
     const result = await classesBookingService.updateBookingPayment(
@@ -137,6 +138,7 @@ exports.updateBookingPayment = async (req, res) => {
         payment_method_id,
         rent_amount,
         course_amount,
+        other_amount,
         quantity,
       },
       performedByUser,
@@ -171,12 +173,12 @@ exports.getBookingPaymentDetail = async (req, res) => {
 exports.updateBookingPaymentEntry = async (req, res) => {
   try {
     const { entryId } = req.params;
-    const { payment_method_id, rent_amount, course_amount } = req.body;
+    const { payment_method_id, rent_amount, course_amount, other_amount } = req.body;
     const performedByUser = req.user;
 
     const result = await classesBookingService.updateBookingPaymentEntry(
       entryId,
-      { payment_method_id, rent_amount, course_amount },
+      { payment_method_id, rent_amount, course_amount, other_amount },
       performedByUser,
     );
 

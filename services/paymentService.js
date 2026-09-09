@@ -179,16 +179,17 @@ const _sumEntries = (rows) =>
       payment_count: acc.payment_count + r.payment_count,
       total_rent: acc.total_rent + r.total_rent,
       total_course: acc.total_course + r.total_course,
+      total_other: acc.total_other + r.total_other,
     }),
-    { payment_count: 0, total_rent: 0, total_course: 0 },
+    { payment_count: 0, total_rent: 0, total_course: 0, total_other: 0 },
   );
 
 /**
- * [READ] Totals rent/course amounts collected for one day/week/month/year
- * (by the booking's own date_booking, same as the bookings export),
- * grouped two ways: by payment method, and by class (the specific
- * schedule slot a booking was for — gym + time + private/group). Optionally
- * scoped to one branch (`gym`) — omitting it summarizes every branch.
+ * [READ] Totals rent/course/other amounts collected for one day/week/month/
+ * year (by the booking's own date_booking, same as the bookings export),
+ * grouped two ways: by payment method, and by class (the specific schedule
+ * slot a booking was for — gym + time + private/group). Optionally scoped
+ * to one branch (`gym`) — omitting it summarizes every branch.
  */
 const getPaymentSummary = async ({ period, value, gym } = {}) => {
   const { start, end } = _getRangeForPeriod(period, value);
@@ -201,7 +202,8 @@ const getPaymentSummary = async ({ period, value, gym } = {}) => {
       COALESCE(pm.name, 'ไม่ระบุวิธีชำระ') AS payment_method_name,
       COUNT(bp.id)::int AS payment_count,
       COALESCE(SUM(bp.rent_amount), 0)::float AS total_rent,
-      COALESCE(SUM(bp.course_amount), 0)::float AS total_course
+      COALESCE(SUM(bp.course_amount), 0)::float AS total_course,
+      COALESCE(SUM(bp.other_amount), 0)::float AS total_other
     FROM booking_payments bp
     JOIN classes_booking cb ON cb.id = bp.classes_booking_id
     JOIN classes_schedule cs ON cs.id = cb.classes_schedule_id
@@ -224,7 +226,8 @@ const getPaymentSummary = async ({ period, value, gym } = {}) => {
       cs.is_private_class,
       COUNT(bp.id)::int AS payment_count,
       COALESCE(SUM(bp.rent_amount), 0)::float AS total_rent,
-      COALESCE(SUM(bp.course_amount), 0)::float AS total_course
+      COALESCE(SUM(bp.course_amount), 0)::float AS total_course,
+      COALESCE(SUM(bp.other_amount), 0)::float AS total_other
     FROM booking_payments bp
     JOIN classes_booking cb ON cb.id = bp.classes_booking_id
     JOIN classes_schedule cs ON cs.id = cb.classes_schedule_id
@@ -242,7 +245,8 @@ const getPaymentSummary = async ({ period, value, gym } = {}) => {
     payment_count: r.payment_count,
     total_rent: r.total_rent,
     total_course: r.total_course,
-    total_amount: r.total_rent + r.total_course,
+    total_other: r.total_other,
+    total_amount: r.total_rent + r.total_course + r.total_other,
   }));
 
   const byClass = classRows.map((r) => ({
@@ -254,7 +258,8 @@ const getPaymentSummary = async ({ period, value, gym } = {}) => {
     payment_count: r.payment_count,
     total_rent: r.total_rent,
     total_course: r.total_course,
-    total_amount: r.total_rent + r.total_course,
+    total_other: r.total_other,
+    total_amount: r.total_rent + r.total_course + r.total_other,
   }));
 
   // Both breakdowns are derived from the same underlying rows for the same
@@ -270,7 +275,10 @@ const getPaymentSummary = async ({ period, value, gym } = {}) => {
     gym: gym || null,
     by_method: byMethod,
     by_class: byClass,
-    totals: { ...totals, total_amount: totals.total_rent + totals.total_course },
+    totals: {
+      ...totals,
+      total_amount: totals.total_rent + totals.total_course + totals.total_other,
+    },
   };
 };
 
@@ -296,6 +304,7 @@ const _fetchPaymentDetailsForExport = async (start, end, gym, scheduleId) => {
       COALESCE(pm.name, 'ไม่ระบุวิธีชำระ') AS payment_method_name,
       bp.rent_amount,
       bp.course_amount,
+      bp.other_amount,
       bp.created_date
     FROM booking_payments bp
     JOIN classes_booking cb ON cb.id = bp.classes_booking_id
@@ -319,7 +328,8 @@ const _fetchPaymentDetailsForExport = async (start, end, gym, scheduleId) => {
     payment_method: r.payment_method_name,
     rent_amount: Number(r.rent_amount),
     course_amount: Number(r.course_amount),
-    total_amount: Number(r.rent_amount) + Number(r.course_amount),
+    other_amount: Number(r.other_amount),
+    total_amount: Number(r.rent_amount) + Number(r.course_amount) + Number(r.other_amount),
     created_date: dayjs(r.created_date).format("YYYY-MM-DD HH:mm:ss"),
   }));
 };
@@ -368,6 +378,7 @@ const exportPaymentSummary = async ({ period, value, gym }, performedByUser = nu
     { header: "Payment Method", key: "payment_method", width: 18 },
     { header: "ค่าเช่า", key: "rent_amount", width: 12 },
     { header: "ค่าคอร์ส", key: "course_amount", width: 12 },
+    { header: "ค่าอื่นๆ", key: "other_amount", width: 12 },
     { header: "Total", key: "total_amount", width: 12 },
     { header: "Recorded At", key: "created_date", width: 18 },
   ];
@@ -380,6 +391,7 @@ const exportPaymentSummary = async ({ period, value, gym }, performedByUser = nu
     { header: "Count", key: "payment_count", width: 10 },
     { header: "ค่าเช่า", key: "total_rent", width: 14 },
     { header: "ค่าคอร์ส", key: "total_course", width: 14 },
+    { header: "ค่าอื่นๆ", key: "total_other", width: 14 },
     { header: "Total", key: "total_amount", width: 14 },
   ];
   methodSheet.getRow(1).font = { bold: true };
@@ -389,6 +401,7 @@ const exportPaymentSummary = async ({ period, value, gym }, performedByUser = nu
     payment_count: summary.totals.payment_count,
     total_rent: summary.totals.total_rent,
     total_course: summary.totals.total_course,
+    total_other: summary.totals.total_other,
     total_amount: summary.totals.total_amount,
   }).font = { bold: true };
 
@@ -401,6 +414,7 @@ const exportPaymentSummary = async ({ period, value, gym }, performedByUser = nu
     { header: "Count", key: "payment_count", width: 10 },
     { header: "ค่าเช่า", key: "total_rent", width: 14 },
     { header: "ค่าคอร์ส", key: "total_course", width: 14 },
+    { header: "ค่าอื่นๆ", key: "total_other", width: 14 },
     { header: "Total", key: "total_amount", width: 14 },
   ];
   classSheet.getRow(1).font = { bold: true };
@@ -413,6 +427,7 @@ const exportPaymentSummary = async ({ period, value, gym }, performedByUser = nu
       payment_count: r.payment_count,
       total_rent: r.total_rent,
       total_course: r.total_course,
+      total_other: r.total_other,
       total_amount: r.total_amount,
     })),
   );
@@ -421,6 +436,7 @@ const exportPaymentSummary = async ({ period, value, gym }, performedByUser = nu
     payment_count: summary.totals.payment_count,
     total_rent: summary.totals.total_rent,
     total_course: summary.totals.total_course,
+    total_other: summary.totals.total_other,
     total_amount: summary.totals.total_amount,
   }).font = { bold: true };
 

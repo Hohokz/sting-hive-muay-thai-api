@@ -59,62 +59,6 @@ const _resolveActorName = (user, fallbackName) => {
   );
 };
 
-// Marks the auto-generated payment-total line inside admin_note, so it can
-// be found and replaced on a later edit instead of duplicating a stale line
-// every time — the rest of admin_note (manually-written notes) is left
-// untouched. A booking can have several payment entries over time (e.g.
-// rent paid one week, course fee paid later), so this line is always the
-// running total across every entry, not just the latest one — just the
-// rent/course amounts, nothing else.
-const PAYMENT_NOTE_MARKER = "[PAYMENT]";
-
-const _buildPaymentNoteLine = (totalRent, totalCourse) => {
-  const parts = [];
-  if (totalRent) {
-    parts.push(`ค่าเช่า: ${Number(totalRent).toLocaleString("th-TH")} บาท`);
-  }
-  if (totalCourse) {
-    parts.push(`ค่าคอร์ส: ${Number(totalCourse).toLocaleString("th-TH")} บาท`);
-  }
-  return `${PAYMENT_NOTE_MARKER} ${parts.join(" | ")}`;
-};
-
-// `newLine` is optional — omitting it (e.g. after deleting the last
-// remaining payment entry) just drops the marker line instead of replacing
-// it with a stale/zeroed one.
-const _replacePaymentNoteLine = (existingNote, newLine) => {
-  const lines = (existingNote || "")
-    .split("\n")
-    .filter((line) => !line.trim().startsWith(PAYMENT_NOTE_MARKER));
-  if (newLine) lines.unshift(newLine);
-  return lines.join("\n").trim();
-};
-
-/**
- * Recomputes the rent/course totals across every remaining payment entry
- * for a booking and rebuilds the admin_note's [PAYMENT] line to match —
- * shared by both editing and deleting an entry, which both need to
- * re-derive the running total afterward.
- */
-const _resyncPaymentNoteTotals = async (booking, transaction) => {
-  const totals = await BookingPayment.findOne({
-    where: { classes_booking_id: booking.id },
-    attributes: [
-      [sequelize.fn("SUM", sequelize.col("rent_amount")), "total_rent"],
-      [sequelize.fn("SUM", sequelize.col("course_amount")), "total_course"],
-    ],
-    raw: true,
-    transaction,
-  });
-
-  const totalRent = Number(totals?.total_rent) || 0;
-  const totalCourse = Number(totals?.total_course) || 0;
-  const noteLine =
-    totalRent || totalCourse ? _buildPaymentNoteLine(totalRent, totalCourse) : null;
-
-  return _replacePaymentNoteLine(booking.admin_note, noteLine);
-};
-
 /**
  * Rejects a booking payload missing fields the rest of the flow assumes are
  * present. Without this, e.g. a missing `date_booking` silently falls back
@@ -757,14 +701,14 @@ const MAX_PAYMENT_ENTRY_QUANTITY = 100;
  * always ADDS new entries to that booking's payment history (a client can
  * pay rent one week and the course fee later — a booking is not limited to
  * a single payment record) — `quantity` creates that many identical entries
- * in one call (e.g. paying the same amount for several sessions at once) —
- * then mirrors the running rent/course totals across every entry into
- * admin_note. Unmarking is a plain status toggle: the payment history
+ * in one call (e.g. paying the same amount for several sessions at once).
+ * Payment amounts are tracked only in booking_payments — admin_note is not
+ * touched by this. Unmarking is a plain status toggle: the payment history
  * itself is left untouched either way.
  */
 const updateBookingPayment = async (
   bookingId,
-  { payment_status, payment_method_id, rent_amount, course_amount, quantity } = {},
+  { payment_status, payment_method_id, rent_amount, course_amount, other_amount, quantity } = {},
   performedByUser = null,
 ) => {
   const transaction = await sequelize.transaction();
@@ -783,8 +727,6 @@ const updateBookingPayment = async (
 
     const actorName = _resolveActorName(performedByUser, booking.client_name);
 
-    let noteToSave = booking.admin_note;
-
     if (payment_status) {
       const qty = quantity === undefined ? 1 : parseInt(quantity, 10);
       if (!Number.isInteger(qty) || qty < 1 || qty > MAX_PAYMENT_ENTRY_QUANTITY) {
@@ -801,33 +743,17 @@ const updateBookingPayment = async (
           payment_method_id: payment_method_id || null,
           rent_amount: rent_amount || 0,
           course_amount: course_amount || 0,
+          other_amount: other_amount || 0,
           created_by: actorName,
           updated_by: actorName,
         })),
         { transaction },
       );
-
-      const totals = await BookingPayment.findOne({
-        where: { classes_booking_id: bookingId },
-        attributes: [
-          [sequelize.fn("SUM", sequelize.col("rent_amount")), "total_rent"],
-          [sequelize.fn("SUM", sequelize.col("course_amount")), "total_course"],
-        ],
-        raw: true,
-        transaction,
-      });
-
-      const noteLine = _buildPaymentNoteLine(
-        Number(totals?.total_rent) || 0,
-        Number(totals?.total_course) || 0,
-      );
-      noteToSave = _replacePaymentNoteLine(booking.admin_note, noteLine);
     }
 
     await booking.update(
       {
         booking_status: newStatus,
-        admin_note: noteToSave,
         updated_by: actorName,
         updated_date: new Date(),
       },
@@ -844,7 +770,7 @@ const updateBookingPayment = async (
         old_status: oldStatus,
         new_status: newStatus,
         ...(payment_status
-          ? { payment_method_id, rent_amount, course_amount, quantity: quantity || 1 }
+          ? { payment_method_id, rent_amount, course_amount, other_amount, quantity: quantity || 1 }
           : {}),
       },
     });
@@ -877,6 +803,7 @@ const getBookingPaymentDetail = async (bookingId) => {
     payment_method_name: r.payment_method?.name || null,
     rent_amount: Number(r.rent_amount),
     course_amount: Number(r.course_amount),
+    other_amount: Number(r.other_amount),
     created_date: r.created_date,
   }));
 
@@ -884,8 +811,9 @@ const getBookingPaymentDetail = async (bookingId) => {
     (acc, e) => ({
       total_rent: acc.total_rent + e.rent_amount,
       total_course: acc.total_course + e.course_amount,
+      total_other: acc.total_other + e.other_amount,
     }),
-    { total_rent: 0, total_course: 0 },
+    { total_rent: 0, total_course: 0, total_other: 0 },
   );
 
   return { entries, totals };
@@ -894,12 +822,10 @@ const getBookingPaymentDetail = async (bookingId) => {
 /**
  * [UPDATE] Edits one existing payment-history entry in place (not a new
  * entry) — e.g. fixing a typo'd amount or the wrong method on a past entry.
- * Recomputes and re-mirrors the booking's running rent/course totals into
- * admin_note afterward, same as adding an entry.
  */
 const updateBookingPaymentEntry = async (
   entryId,
-  { payment_method_id, rent_amount, course_amount } = {},
+  { payment_method_id, rent_amount, course_amount, other_amount } = {},
   performedByUser = null,
 ) => {
   const transaction = await sequelize.transaction();
@@ -925,6 +851,7 @@ const updateBookingPaymentEntry = async (
       payment_method_id: record.payment_method_id,
       rent_amount: Number(record.rent_amount),
       course_amount: Number(record.course_amount),
+      other_amount: Number(record.other_amount),
     };
 
     await record.update(
@@ -932,17 +859,15 @@ const updateBookingPaymentEntry = async (
         payment_method_id: payment_method_id || null,
         rent_amount: rent_amount || 0,
         course_amount: course_amount || 0,
+        other_amount: other_amount || 0,
         updated_by: actorName,
         updated_date: new Date(),
       },
       { transaction },
     );
 
-    const noteToSave = await _resyncPaymentNoteTotals(booking, transaction);
-
     await booking.update(
       {
-        admin_note: noteToSave,
         updated_by: actorName,
         updated_date: new Date(),
       },
@@ -958,7 +883,7 @@ const updateBookingPaymentEntry = async (
         booking_id: record.classes_booking_id,
         payment_entry_id: entryId,
         old_values: oldValues,
-        new_values: { payment_method_id, rent_amount, course_amount },
+        new_values: { payment_method_id, rent_amount, course_amount, other_amount },
       },
     });
 
@@ -973,9 +898,7 @@ const updateBookingPaymentEntry = async (
 };
 
 /**
- * [DELETE] Permanently removes one payment-history entry, then recomputes
- * and re-mirrors the remaining rent/course totals into admin_note (dropping
- * the [PAYMENT] line entirely if that was the last entry).
+ * [DELETE] Permanently removes one payment-history entry.
  */
 const deleteBookingPaymentEntry = async (entryId, performedByUser = null) => {
   const transaction = await sequelize.transaction();
@@ -1001,15 +924,13 @@ const deleteBookingPaymentEntry = async (entryId, performedByUser = null) => {
       payment_method_id: record.payment_method_id,
       rent_amount: Number(record.rent_amount),
       course_amount: Number(record.course_amount),
+      other_amount: Number(record.other_amount),
     };
 
     await record.destroy({ transaction });
 
-    const noteToSave = await _resyncPaymentNoteTotals(booking, transaction);
-
     await booking.update(
       {
-        admin_note: noteToSave,
         updated_by: actorName,
         updated_date: new Date(),
       },

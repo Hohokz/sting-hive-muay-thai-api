@@ -36,6 +36,11 @@ const BookingPayment = sequelize.define(
       allowNull: false,
       defaultValue: 0,
     },
+    other_amount: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: false,
+      defaultValue: 0,
+    },
     created_date: {
       type: DataTypes.DATE(6),
       allowNull: false,
