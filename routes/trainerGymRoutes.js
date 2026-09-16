@@ -3,8 +3,14 @@ const router = express.Router();
 const trainerGymController = require("../controllers/trainerGymController");
 const { authenticateToken, authorizeRole } = require("../middlewares/authMiddleware");
 
-// Trainer-gym management is admin-only (matches the frontend's
-// /admin/trainers route, which is gated adminOnly: true).
+// Public: id/name only (no email/phone) — used by the customer booking
+// flow's private-class trainer picker (new booking + self-service edit,
+// neither of which requires login). Registered before the auth gate below
+// so this one route stays reachable without a token.
+router.get("/public/:gymId", trainerGymController.getPublicTrainersByGym);
+
+// Everything else here is trainer-gym *management* — admin-only (matches
+// the frontend's /admin/trainers route, which is gated adminOnly: true).
 router.use(authenticateToken);
 router.use(authorizeRole(["ADMIN"]));
 
