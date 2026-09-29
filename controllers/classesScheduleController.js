@@ -117,6 +117,18 @@ exports.getScheduleRealtimeAvailability = async (req, res) => {
 /**
  * [GET] Returns all advance configs
  */
+/**
+ * [GET] Public: dates a gym is closed by an advance rule, for the booking calendar
+ */
+exports.getGymClosedDates = async (req, res) => {
+  try {
+    const dates = await classesScheduleService.getGymClosedDates(req.query);
+    res.json({ success: true, data: dates });
+  } catch (error) {
+    sendError(res, error, "ไม่สามารถดึงวันที่ยิมปิดได้");
+  }
+};
+
 exports.getAdvancedSchedules = async (req, res) => {
   try {
     const advanced = await classesScheduleService.getAdvancedSchedules();

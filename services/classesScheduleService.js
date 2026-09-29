@@ -12,9 +12,8 @@ const dayjs = require("dayjs");
 const utc = require("dayjs/plugin/utc");
 
 const activityLogService = require("./activityLogService");
-const advancedScheduleJob = require("../job/advancedScheduleJob");
 const cacheUtil = require("../utils/cacheUtility");
-const { BOOKING_STATUS } = require("../models/Enums");
+const { BOOKING_STATUS, GYM_ENUM } = require("../models/Enums");
 
 dayjs.extend(utc);
 
@@ -27,16 +26,35 @@ const ACTIVE_BOOKING_STATUSES_EXCLUDED = [
 // 1. HELPER / VALIDATION FUNCTIONS
 // =================================================================
 
+// The gym runs on Thai time (UTC+7), whatever timezone the server is in.
+const BUSINESS_UTC_OFFSET_MINUTES = 7 * 60;
+
 /**
- * Returns the start/end of a day, plus the time used to check advance configs (07:00).
+ * Returns the gym's calendar date (YYYY-MM-DD) for a date. A plain
+ * YYYY-MM-DD string is already a calendar date and is used as-is; anything
+ * else (Date, ISO timestamp) is read in Thai time.
+ */
+const _toBusinessDateKey = (date) => {
+  if (typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(date)) return date;
+  return dayjs(date).utcOffset(BUSINESS_UTC_OFFSET_MINUTES).format("YYYY-MM-DD");
+};
+
+/**
+ * Returns the start/end of a day, plus the time used to check advance configs.
+ *
+ * The admin form sends advance config dates as YYYY-MM-DD, which are stored
+ * as midnight UTC of that calendar date — so checkTime is midnight UTC of
+ * the requested calendar date too. Both ends of the range are inclusive, so
+ * a config covers every day from start_date through end_date regardless of
+ * the server's timezone. (Anchoring to 07:00 server-local time used to drop
+ * the last day whenever the server ran in UTC.)
  * @param {string|Date} date
  * @returns {object} { checkTime, startOfDay, endOfDay }
  */
 const _getDateRange = (date) => {
   const targetDate = dayjs(date);
   return {
-    // Config checks are anchored to 07:00 AM by convention.
-    checkTime: targetDate.startOf("day").hour(7).toDate(),
+    checkTime: dayjs.utc(_toBusinessDateKey(date)).toDate(),
     startOfDay: targetDate.startOf("day").toDate(),
     endOfDay: targetDate.endOf("day").toDate(),
   };
@@ -378,6 +396,7 @@ const getAvailableSchedulesByBookingDate = async (
         booking_count: availability.currentBookingCount,
         available_seats: availability.availableSeats,
         is_full: availability.availableSeats <= 0,
+        is_closed: availability.isClassClosed,
       });
     }
 
@@ -609,6 +628,93 @@ const _checkAvailability = async (
   return null;
 };
 
+const DATE_KEY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+const MAX_CLOSED_DATES_RANGE_DAYS = 366;
+
+/**
+ * [READ] Returns the calendar dates (YYYY-MM-DD) on which a gym is closed by
+ * a whole-gym advance rule, within [start_date, end_date]. Public — lets the
+ * booking calendar disable those dates. Class-level closures aren't
+ * included: the gym is still open for other classes on those days.
+ */
+const getGymClosedDates = async ({ gym_enum, start_date, end_date } = {}) => {
+  if (!Object.values(GYM_ENUM).includes(gym_enum)) {
+    const error = new Error("gym_enum ไม่ถูกต้อง");
+    error.status = 400;
+    throw error;
+  }
+  if (!DATE_KEY_REGEX.test(start_date || "") || !DATE_KEY_REGEX.test(end_date || "")) {
+    const error = new Error("กรุณาระบุ start_date และ end_date ในรูปแบบ YYYY-MM-DD");
+    error.status = 400;
+    throw error;
+  }
+
+  // Rule dates are stored as midnight UTC of the calendar day, so work in UTC.
+  const rangeStart = dayjs.utc(start_date);
+  const rangeEnd = dayjs.utc(end_date);
+  const rangeDays = rangeEnd.diff(rangeStart, "day");
+  if (rangeDays < 0 || rangeDays > MAX_CLOSED_DATES_RANGE_DAYS) {
+    const error = new Error(
+      `ช่วงวันที่ต้องไม่ติดลบและไม่เกิน ${MAX_CLOSED_DATES_RANGE_DAYS} วัน`,
+    );
+    error.status = 400;
+    throw error;
+  }
+
+  // "availability" prefix → cleared whenever an advance rule changes
+  const cacheKey = `availability:closed-dates:${gym_enum}:${start_date}:${end_date}`;
+  const cached = cacheUtil.get(cacheKey);
+  if (cached) return cached;
+
+  const gym = await Gyms.findOne({ where: { gym_enum }, attributes: ["id"] });
+  if (!gym) return [];
+
+  const closures = await ClassesBookingInAdvance.findAll({
+    where: {
+      gyms_id: gym.id,
+      is_close_gym: true,
+      classes_schedule_id: null,
+      start_date: { [Op.lte]: rangeEnd.toDate() },
+      end_date: { [Op.gte]: rangeStart.toDate() },
+    },
+    attributes: ["start_date", "end_date"],
+  });
+
+  const closedDates = new Set();
+  for (const closure of closures) {
+    let day = dayjs.utc(closure.start_date).startOf("day");
+    if (day.isBefore(rangeStart)) day = rangeStart;
+    let last = dayjs.utc(closure.end_date).startOf("day");
+    if (last.isAfter(rangeEnd)) last = rangeEnd;
+
+    while (!day.isAfter(last)) {
+      closedDates.add(day.format("YYYY-MM-DD"));
+      day = day.add(1, "day");
+    }
+  }
+
+  const result = [...closedDates].sort();
+  cacheUtil.set(cacheKey, result, 60000);
+  return result;
+};
+
+/**
+ * What an advance config does, derived from is_close_gym + classes_schedule_id:
+ * - GYM_CLOSED:   is_close_gym, no schedule     → whole gym closed
+ * - CLASS_CLOSED: is_close_gym, with schedule   → only that class closed
+ * - CAPACITY:     not closing, with schedule    → that class's capacity overridden
+ */
+const RULE_TYPE = Object.freeze({
+  GYM_CLOSED: "GYM_CLOSED",
+  CLASS_CLOSED: "CLASS_CLOSED",
+  CAPACITY: "CAPACITY",
+});
+
+const _getRuleType = (config) => {
+  if (!config.is_close_gym) return RULE_TYPE.CAPACITY;
+  return config.classes_schedule_id ? RULE_TYPE.CLASS_CLOSED : RULE_TYPE.GYM_CLOSED;
+};
+
 /**
  * [READ] Returns advance configs (closures / capacity adjustments).
  */
@@ -641,34 +747,58 @@ const getAdvancedSchedules = async (filters = {}) => {
 
   for (const config of configs) {
     const item = config.toJSON();
+    const common = {
+      id: item.id,
+      rule_type: _getRuleType(item),
+      gyms_id: item.gyms_id,
+      gym_enum: item.schedule?.gym_enum,
+      schedule_id: item.classes_schedule_id,
+      time_slot: item.schedule
+        ? `${item.schedule.start_time} - ${item.schedule.end_time}`
+        : null,
+      is_close_gym: !!item.is_close_gym,
+      start_date: item.start_date,
+      end_date: item.end_date,
+      created_date: item.created_date,
+      created_by: item.created_by,
+    };
 
     if (item.is_close_gym) {
       gym_closures.push({
-        id: item.id,
-        gyms_id: item.gyms_id,
-        is_close_gym: true,
-        start_date: item.start_date,
-        end_date: item.end_date,
+        ...common,
         description: item.classes_schedule_id
           ? `ปิดคลาส: ${item.schedule?.start_time}-${item.schedule?.end_time}`
           : "ปิดยิม (ทั้งวัน)",
       });
     } else {
       capacity_adjustments.push({
-        id: item.id,
-        schedule_id: item.classes_schedule_id,
-        gym_enum: item.schedule?.gym_enum,
-        time_slot: item.schedule
-          ? `${item.schedule.start_time} - ${item.schedule.end_time}`
-          : "ไม่ทราบช่วงเวลา",
+        ...common,
+        time_slot: common.time_slot || "ไม่ทราบช่วงเวลา",
+        capacity: item.capacity,
         new_capacity: item.capacity,
-        start_date: item.start_date,
-        end_date: item.end_date,
+        original_capacity: item.old_capasity,
       });
     }
   }
 
   return { gym_closures, capacity_adjustments };
+};
+
+/**
+ * A capacity override needs a class and a whole-number capacity (0 is
+ * allowed, though closing the class states that intent more clearly).
+ */
+const _validateCapacityOverride = (scheduleId, capacity) => {
+  if (!scheduleId) {
+    const error = new Error("schedule_id is required for capacity adjustment.");
+    error.status = 400;
+    throw error;
+  }
+  if (!Number.isInteger(capacity) || capacity < 0) {
+    const error = new Error("capacity must be a whole number of 0 or more.");
+    error.status = 400;
+    throw error;
+  }
 };
 
 const createAdvancedSchedule = async (scheduleData, performedByUser = null) => {
@@ -706,11 +836,14 @@ const createAdvancedSchedule = async (scheduleData, performedByUser = null) => {
       if (capInfo) currentCapacity = capInfo.capacity;
     }
 
-    // 2. Validate gym closure input
+    // 2. Validate input
     if (scheduleData.is_close_gym && !gymsId) {
       const error = new Error("gyms_id is required for gym closure.");
       error.status = 400;
       throw error;
+    }
+    if (!scheduleData.is_close_gym) {
+      _validateCapacityOverride(scheduleData.schedule_id, scheduleData.capacity);
     }
 
     // 3. Validate the gym exists (and keep its name/enum for the activity log)
@@ -747,7 +880,7 @@ const createAdvancedSchedule = async (scheduleData, performedByUser = null) => {
         classes_schedule_id: scheduleData.schedule_id || null,
         start_date: scheduleData.start_date,
         end_date: scheduleData.end_date,
-        capacity: scheduleData.capacity,
+        capacity: scheduleData.is_close_gym ? null : scheduleData.capacity,
         old_capasity: currentCapacity,
         is_close_gym: scheduleData.is_close_gym || false,
         gyms_id: gymsId,
@@ -770,6 +903,10 @@ const createAdvancedSchedule = async (scheduleData, performedByUser = null) => {
           schedule_id: scheduleData.schedule_id,
           capacity: scheduleData.capacity,
           is_close_gym: scheduleData.is_close_gym,
+          rule_type: _getRuleType({
+            is_close_gym: scheduleData.is_close_gym,
+            classes_schedule_id: scheduleData.schedule_id,
+          }),
           start_date: scheduleData.start_date,
           end_date: scheduleData.end_date,
           gyms_id: gymsId,
@@ -780,9 +917,9 @@ const createAdvancedSchedule = async (scheduleData, performedByUser = null) => {
       { transaction: t },
     );
 
-    await _applyAdvancedScheduleEffect(newRecord, t);
-
     await t.commit();
+
+    cacheUtil.clearByPrefix("availability");
 
     return {
       record: newRecord,
@@ -826,7 +963,12 @@ const updateAdvancedSchedule = async (
         updateData.is_close_gym !== undefined
           ? updateData.is_close_gym
           : config.is_close_gym,
-      classes_schedule_id: updateData.schedule_id || config.classes_schedule_id,
+      // schedule_id: null/"" is meaningful here (e.g. class closure → whole-gym
+      // closure), so only fall back to the stored value when it's omitted.
+      classes_schedule_id:
+        updateData.schedule_id !== undefined
+          ? updateData.schedule_id || null
+          : config.classes_schedule_id,
       gyms_id: updateData.gyms_id || config.gyms_id,
     };
 
@@ -838,13 +980,7 @@ const updateAdvancedSchedule = async (
         throw error;
       }
     } else {
-      if (!nextData.classes_schedule_id) {
-        const error = new Error(
-          "schedule_id is required for capacity adjustment.",
-        );
-        error.status = 400;
-        throw error;
-      }
+      _validateCapacityOverride(nextData.classes_schedule_id, nextData.capacity);
 
       // Re-check availability only if something relevant actually changed
       const isScheduleChanged =
@@ -869,7 +1005,9 @@ const updateAdvancedSchedule = async (
       }
     }
 
-    // Keep old values for the log, and for reverting the old target below
+    if (nextData.is_close_gym) nextData.capacity = null;
+
+    // Keep old values for the log
     const oldValues = {
       start_date: config.start_date,
       end_date: config.end_date,
@@ -913,13 +1051,9 @@ const updateAdvancedSchedule = async (
       { transaction: t },
     );
 
-    // Clean up the OLD target first, in case this edit means it's no longer
-    // needed (e.g. no longer closing the gym, or switched to a different
-    // schedule) — then apply the NEW target's effect if it's in effect now.
-    await _revertAdvancedScheduleEffectIfNoLongerNeeded(oldValues, id, t);
-    await _applyAdvancedScheduleEffect(config, t);
-
     await t.commit();
+
+    cacheUtil.clearByPrefix("availability");
     return config;
   } catch (error) {
     if (t) await t.rollback();
@@ -928,109 +1062,8 @@ const updateAdvancedSchedule = async (
 };
 
 /**
- * [HELPER] Whether a config's own date range currently covers "now", using
- * the same 07:00 anchor convention as getScheduleRealtimeAvailability.
- */
-const _isConfigCurrentlyInEffect = (config, checkTime = _getDateRange(new Date()).checkTime) => {
-  return config.start_date <= checkTime && config.end_date >= checkTime;
-};
-
-/**
- * [HELPER] Applies a config's effect immediately if it's currently in
- * effect (covers its whole date range, not just its start day), instead of
- * waiting for the nightly cron job — covers both gym closures
- * (ClassesSchedule.is_active) and capacity overrides (ClassesCapacity.capacity).
- */
-const _applyAdvancedScheduleEffect = async (config, transaction) => {
-  if (!_isConfigCurrentlyInEffect(config)) return;
-
-  if (config.is_close_gym) {
-    await ClassesSchedule.update(
-      { is_active: false },
-      { where: { gyms_id: config.gyms_id }, transaction },
-    );
-    return;
-  }
-
-  if (config.classes_schedule_id) {
-    await ClassesCapacity.update(
-      { capacity: config.capacity },
-      { where: { classes_id: config.classes_schedule_id }, transaction },
-    );
-  }
-};
-
-/**
- * [HELPER] After a config is deleted or edited away, checks whether some
- * OTHER still-active config justifies keeping the gym/schedule closed or
- * capacity-adjusted — if not, restores it to normal. Only acts when
- * `previousConfig` was itself currently in effect; if it never took effect
- * (e.g. scheduled for the future) there's nothing to undo.
- *
- * Without this, deleting or editing away a config that HAD already taken
- * effect left the gym/schedule stuck closed/adjusted forever — the only
- * other place that reverts anything is the nightly cron job, and only for a
- * config whose end_date naturally arrives while the row still exists.
- *
- * @param {object} previousConfig - the config's state before this delete/edit
- * @param {string|number} excludeId - previousConfig's own row ID, excluded
- *   from the "is something else still active" check
- */
-const _revertAdvancedScheduleEffectIfNoLongerNeeded = async (
-  previousConfig,
-  excludeId,
-  transaction,
-) => {
-  const { checkTime } = _getDateRange(new Date());
-  if (!_isConfigCurrentlyInEffect(previousConfig, checkTime)) return;
-
-  if (previousConfig.is_close_gym) {
-    const stillClosed = await ClassesBookingInAdvance.count({
-      where: {
-        id: { [Op.ne]: excludeId },
-        gyms_id: previousConfig.gyms_id,
-        is_close_gym: true,
-        start_date: { [Op.lte]: checkTime },
-        end_date: { [Op.gte]: checkTime },
-      },
-      transaction,
-    });
-
-    if (!stillClosed) {
-      await ClassesSchedule.update(
-        { is_active: true },
-        { where: { gyms_id: previousConfig.gyms_id }, transaction },
-      );
-    }
-    return;
-  }
-
-  if (previousConfig.classes_schedule_id) {
-    const stillOverridden = await ClassesBookingInAdvance.count({
-      where: {
-        id: { [Op.ne]: excludeId },
-        classes_schedule_id: previousConfig.classes_schedule_id,
-        is_close_gym: false,
-        capacity: { [Op.not]: null },
-        start_date: { [Op.lte]: checkTime },
-        end_date: { [Op.gte]: checkTime },
-      },
-      transaction,
-    });
-
-    if (!stillOverridden) {
-      await ClassesCapacity.update(
-        { capacity: previousConfig.old_capasity },
-        { where: { classes_id: previousConfig.classes_schedule_id }, transaction },
-      );
-    }
-  }
-};
-
-/**
- * [DELETE] Deletes an advance config, first restoring is_active/capacity to
- * normal if nothing else still justifies keeping the gym/schedule
- * closed/adjusted once this row is gone.
+ * [DELETE] Deletes an advance config. Configs only ever affect availability
+ * for their own dates, so there's nothing in the normal schedule to restore.
  */
 const deleteAdvancedSchedule = async (id, performedByUser = null) => {
   const t = await ClassesBookingInAdvance.sequelize.transaction();
@@ -1044,8 +1077,6 @@ const deleteAdvancedSchedule = async (id, performedByUser = null) => {
       error.status = 404;
       throw error;
     }
-
-    await _revertAdvancedScheduleEffectIfNoLongerNeeded(config, id, t);
 
     const gym = config.gyms_id
       ? await Gyms.findByPk(config.gyms_id, {
@@ -1064,6 +1095,7 @@ const deleteAdvancedSchedule = async (id, performedByUser = null) => {
         schedule_id: config.classes_schedule_id,
         capacity: config.capacity,
         is_close_gym: config.is_close_gym,
+        rule_type: _getRuleType(config),
         start_date: config.start_date,
         end_date: config.end_date,
         gyms_id: config.gyms_id,
@@ -1086,14 +1118,6 @@ const deleteAdvancedSchedule = async (id, performedByUser = null) => {
   }
 };
 
-/**
- * [ACTION] Manually triggers the advance-schedule cron job's logic on demand.
- * Note: currently has no live HTTP route calling it — kept exported for
- * manual/administrative use (e.g. via a script), see job/advancedScheduleJob.js.
- */
-const activeScheduleInAdvance = async () => {
-  return await advancedScheduleJob.runAdvancedScheduleJob();
-};
 // =================================================================
 // 4. EXPORTS
 // =================================================================
@@ -1107,8 +1131,8 @@ module.exports = {
   getAvailableSchedulesByBookingDate,
   createAdvancedSchedule,
   getAdvancedSchedules,
+  getGymClosedDates,
   updateAdvancedSchedule,
   deleteAdvancedSchedule,
   getScheduleRealtimeAvailability, // shared logic, also used by classesBookingService
-  activeScheduleInAdvance,
 };

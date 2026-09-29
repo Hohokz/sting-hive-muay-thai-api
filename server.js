@@ -4,7 +4,6 @@ const express = require("express");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
 const { connectDB } = require("./config/db");
-const { startAdvancedScheduleJob } = require("./job/advancedScheduleJob");
 const { startMonthlyArchivalJob } = require("./job/monthlyArchivalJob");
 
 const app = express();
@@ -63,7 +62,6 @@ const setupDatabase = async () => {
     console.log("✅ [Server] Database connected.");
 
     // Start the cron jobs as soon as the DB is ready
-    startAdvancedScheduleJob();
     startMonthlyArchivalJob();
     console.log("⏰ [Server] Background Jobs initialized.");
   } catch (error) {

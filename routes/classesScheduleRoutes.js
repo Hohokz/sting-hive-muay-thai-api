@@ -16,6 +16,10 @@ router.get("/", scheduleController.getSchedules);
 
 router.get("/available", scheduleController.getAvailableSchedulesByBookingDate);
 
+// Public: GET /api/v1/schedules/closed-dates?gym_enum=&start_date=&end_date=
+// Dates a gym is closed by an advance rule, so the booking calendar can disable them
+router.get("/closed-dates", scheduleController.getGymClosedDates);
+
 // 2. [CREATE] POST /api/v1/schedules
 // Creates a new schedule along with its capacity
 router.post(
@@ -75,8 +79,5 @@ router.delete(
   authorizeRole(["ADMIN"]),
   scheduleController.deleteAdvancedSchedule,
 );
-
-// Note: classesScheduleService.activeScheduleInAdvance (a manual trigger for
-// the advance-schedule cron job) has no live route calling it today.
 
 module.exports = router;
