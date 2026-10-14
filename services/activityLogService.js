@@ -32,6 +32,31 @@ const createLog = async (data) => {
   }
 };
 
+const SCHEDULE_HISTORY_LIMIT = 200;
+
+/**
+ * [READ] SCHEDULE logs that mention one schedule, newest first: its own
+ * create/update/delete (details.schedule_id) and advance rules created on it,
+ * moved onto it or moved away from it (UPDATE_ADVANCED keeps the id under
+ * old_values/new_values.classes_schedule_id).
+ */
+const getScheduleLogs = async (scheduleId) => {
+  const rows = await ActivityLog.findAll({
+    where: {
+      service: "SCHEDULE",
+      [Op.or]: [
+        { details: { schedule_id: scheduleId } },
+        { details: { old_values: { classes_schedule_id: scheduleId } } },
+        { details: { new_values: { classes_schedule_id: scheduleId } } },
+      ],
+    },
+    attributes: ["id", "user_id", "user_name", "action", "details", "created_at"],
+    order: [["created_at", "DESC"]],
+    limit: SCHEDULE_HISTORY_LIMIT,
+  });
+  return rows.map((r) => r.get({ plain: true }));
+};
+
 /**
  * [READ] Returns activity logs, enriched with schedule details where relevant.
  */
@@ -390,6 +415,7 @@ const purgeLogsByMonth = async (month, performedByUser = null) => {
 module.exports = {
   createLog,
   getActivityLogs,
+  getScheduleLogs,
   exportLogs,
   exportLogsToCSV,
   exportLogsToExcel,

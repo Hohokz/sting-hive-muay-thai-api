@@ -20,6 +20,14 @@ router.get("/available", scheduleController.getAvailableSchedulesByBookingDate);
 // Dates a gym is closed by an advance rule, so the booking calendar can disable them
 router.get("/closed-dates", scheduleController.getGymClosedDates);
 
+// [READ] GET /api/v1/schedules/:id/history — who changed this schedule and its advance rules
+router.get(
+  "/:id/history",
+  authenticateToken,
+  authorizeRole(["ADMIN"]),
+  scheduleController.getScheduleHistory,
+);
+
 // 2. [CREATE] POST /api/v1/schedules
 // Creates a new schedule along with its capacity
 router.post(

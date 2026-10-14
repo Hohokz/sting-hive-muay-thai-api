@@ -38,7 +38,7 @@ jest.mock('../../models/Associations', () => ({
   }
 }));
 
-jest.mock('../../services/activityLogService', () => ({ createLog: jest.fn() }));
+jest.mock('../../services/activityLogService', () => ({ createLog: jest.fn(), getScheduleLogs: jest.fn() }));
 jest.mock('../../utils/cacheUtility', () => ({ get: jest.fn(), set: jest.fn(), clearByPrefix: jest.fn() }));
 
 // Dates relative to "now", so a config is in effect / expired / in the future
@@ -220,6 +220,37 @@ describe('Booking in advance', () => {
       const where = ClassesBookingInAdvance.findAll.mock.calls[0][0].where;
       expect(where.start_date[Op.lte]).toEqual(new Date('2026-10-31'));
       expect(where.end_date[Op.gte]).toEqual(new Date('2026-10-01'));
+    });
+  });
+
+  // ===============================================================
+  // getScheduleHistory — admin "History" view
+  // ===============================================================
+  describe('getScheduleHistory', () => {
+    const id = '1d20d13d-5bc3-4ff5-9d2c-dc1a045e0dde';
+
+    test('returns the schedule with its logs', async () => {
+      const schedule = { id, created_by: 'APIWAT' };
+      const logs = [{ action: 'UPDATE', user_name: 'kritsana' }];
+      ClassesSchedule.findByPk.mockResolvedValue(schedule);
+      activityLogService.getScheduleLogs.mockResolvedValue(logs);
+
+      const result = await classesScheduleService.getScheduleHistory(id);
+
+      expect(result).toEqual({ schedule, logs });
+      expect(activityLogService.getScheduleLogs).toHaveBeenCalledWith(id);
+    });
+
+    test('throws 400 for a malformed id without querying', async () => {
+      await expect(classesScheduleService.getScheduleHistory("1' OR 1=1")).rejects.toMatchObject({ status: 400 });
+      expect(ClassesSchedule.findByPk).not.toHaveBeenCalled();
+    });
+
+    test('throws 404 when the schedule does not exist', async () => {
+      ClassesSchedule.findByPk.mockResolvedValue(null);
+
+      await expect(classesScheduleService.getScheduleHistory(id)).rejects.toMatchObject({ status: 404 });
+      expect(activityLogService.getScheduleLogs).not.toHaveBeenCalled();
     });
   });
 

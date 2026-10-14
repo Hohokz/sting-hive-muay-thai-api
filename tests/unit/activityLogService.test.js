@@ -5,7 +5,8 @@ const { ActivityLog, User, ClassesSchedule, ClassesCapacity } = require('../../m
 jest.mock('../../models/Associations', () => ({
   ActivityLog: {
     create: jest.fn(),
-    findAndCountAll: jest.fn()
+    findAndCountAll: jest.fn(),
+    findAll: jest.fn()
   },
   User: {},
   ClassesSchedule: {
@@ -91,6 +92,25 @@ describe('ActivityLogService', () => {
           created_at: expect.any(Object)
         })
       }));
+    });
+  });
+
+  describe('getScheduleLogs', () => {
+    test('finds SCHEDULE logs mentioning the schedule directly or via a moved advance rule', async () => {
+      const { Op } = require('sequelize');
+      ActivityLog.findAll.mockResolvedValue([{ get: () => ({ action: 'UPDATE' }) }]);
+
+      const result = await activityLogService.getScheduleLogs('s1');
+
+      expect(result).toEqual([{ action: 'UPDATE' }]);
+      const query = ActivityLog.findAll.mock.calls[0][0];
+      expect(query.where.service).toBe('SCHEDULE');
+      expect(query.where[Op.or]).toEqual([
+        { details: { schedule_id: 's1' } },
+        { details: { old_values: { classes_schedule_id: 's1' } } },
+        { details: { new_values: { classes_schedule_id: 's1' } } }
+      ]);
+      expect(query.order).toEqual([['created_at', 'DESC']]);
     });
   });
 });

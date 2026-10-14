@@ -118,6 +118,18 @@ exports.getScheduleRealtimeAvailability = async (req, res) => {
  * [GET] Returns all advance configs
  */
 /**
+ * [GET] Admin: change history of one schedule
+ */
+exports.getScheduleHistory = async (req, res) => {
+  try {
+    const history = await classesScheduleService.getScheduleHistory(req.params.id);
+    res.json({ success: true, data: history });
+  } catch (error) {
+    sendError(res, error, "ไม่สามารถดึงประวัติตารางเรียนได้");
+  }
+};
+
+/**
  * [GET] Public: dates a gym is closed by an advance rule, for the booking calendar
  */
 exports.getGymClosedDates = async (req, res) => {

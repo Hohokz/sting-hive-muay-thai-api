@@ -291,6 +291,37 @@ const updateSchedule = async (id, updateData, performedByUser = null) => {
   }
 };
 
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * [READ] Change history of a schedule for the admin "History" view: who
+ * created it (kept on the row itself, since the oldest schedules predate
+ * activity logging) plus every SCHEDULE log that mentions it.
+ */
+const getScheduleHistory = async (id) => {
+  if (!UUID_REGEX.test(id || "")) {
+    const error = new Error("Schedule ID ไม่ถูกต้อง");
+    error.status = 400;
+    throw error;
+  }
+
+  const schedule = await ClassesSchedule.findByPk(id, {
+    attributes: [
+      "id", "gym_enum", "start_time", "end_time", "is_private_class",
+      "created_by", "created_date", "updated_by", "updated_date",
+    ],
+  });
+  if (!schedule) {
+    const error = new Error(`ไม่พบตารางเรียน ID ${id}`);
+    error.status = 404;
+    throw error;
+  }
+
+  const logs = await activityLogService.getScheduleLogs(id);
+  return { schedule, logs };
+};
+
 const getSchedulesById = async (id) => {
   if (!id) {
     const error = new Error("Schedule ID is required.");
@@ -1126,6 +1157,7 @@ module.exports = {
   createSchedule,
   getSchedules,
   getSchedulesById,
+  getScheduleHistory,
   updateSchedule,
   deleteSchedule,
   getAvailableSchedulesByBookingDate,
