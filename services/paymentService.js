@@ -1,13 +1,17 @@
 const { sequelize } = require("../config/db");
 const { PaymentMethod } = require("../models/Associations");
 const activityLogService = require("./activityLogService");
-const { getMonthRange } = require("../utils/monthGuard");
 const { GYM_ENUM } = require("../models/Enums");
 const ExcelJS = require("exceljs");
 
 const dayjs = require("dayjs");
 dayjs.extend(require("dayjs/plugin/utc"));
+dayjs.extend(require("dayjs/plugin/timezone"));
 dayjs.extend(require("dayjs/plugin/isoWeek"));
+
+// The gyms are in Thailand, so a summary "day" is a Thai calendar day,
+// whatever timezone the server or the Postgres session happens to run in.
+const GYM_TZ = "Asia/Bangkok";
 
 // The activity_logs.service column is a hard Postgres ENUM (BOOKING,
 // SCHEDULE, USER, TRAINER_GYM — see models/ActivityLog.js) that can't be
@@ -24,11 +28,11 @@ const YEAR_FORMAT = /^\d{4}$/;
 
 /**
  * Turns a (period, value) pair from the Payment Summary page's Day/Week/
- * Month/Year tabs into a [start, end) date range, anchored in UTC like the
- * bookings export (Postgres's session timezone is UTC — see
- * _fetchBookingsForExport in classesBookingService.js for the same
- * reasoning). `value`'s expected shape comes straight from the matching
- * HTML date input: "YYYY-MM-DD" (day), "YYYY-Www" (week, ISO 8601), "YYYY-MM"
+ * Month/Year tabs into a [start, end) range between Thai midnights (GYM_TZ).
+ * date_booking is stored as 07:00 Thai time on the class day (00:00 UTC),
+ * so it lands inside the Thai day it belongs to; a payment's created_date
+ * would too. `value`'s expected shape comes straight from the matching HTML
+ * date input: "YYYY-MM-DD" (day), "YYYY-Www" (week, ISO 8601), "YYYY-MM"
  * (month), "YYYY" (year).
  */
 const _getRangeForPeriod = (period, value) => {
@@ -38,33 +42,38 @@ const _getRangeForPeriod = (period, value) => {
     throw error;
   };
 
+  // [Thai midnight of firstDay, Thai midnight `count` units later)
+  const thaiRange = (firstDay, count, unit) => {
+    const start = dayjs.tz(firstDay, GYM_TZ);
+    return { start: start.toDate(), end: start.add(count, unit).toDate() };
+  };
+
   if (period === "day") {
     if (!DAY_FORMAT.test(value || "")) invalid("YYYY-MM-DD");
-    const start = dayjs.utc(value).startOf("day");
-    return { start: start.toDate(), end: start.add(1, "day").toDate() };
+    return thaiRange(value, 1, "day");
   }
 
   if (period === "week") {
     const match = WEEK_FORMAT.exec(value || "");
     if (!match) invalid("YYYY-Www");
     const [, year, week] = match;
-    const start = dayjs
-      .utc()
-      .year(Number(year))
+    // Only the calendar date of that week's Monday is taken from here
+    const monday = dayjs
+      .utc(`${year}-01-04`)
       .isoWeek(Number(week))
-      .startOf("isoWeek");
-    return { start: start.toDate(), end: start.add(1, "week").toDate() };
+      .startOf("isoWeek")
+      .format("YYYY-MM-DD");
+    return thaiRange(monday, 1, "week");
   }
 
   if (period === "month") {
     if (!MONTH_FORMAT.test(value || "")) invalid("YYYY-MM");
-    return getMonthRange(value);
+    return thaiRange(`${value}-01`, 1, "month");
   }
 
   if (period === "year") {
     if (!YEAR_FORMAT.test(value || "")) invalid("YYYY");
-    const start = dayjs.utc(`${value}-01-01`).startOf("year");
-    return { start: start.toDate(), end: start.add(1, "year").toDate() };
+    return thaiRange(`${value}-01-01`, 1, "year");
   }
 
   const error = new Error(`ช่วงเวลาไม่ถูกต้อง: ${period} (ต้องเป็น day, week, month หรือ year)`);
@@ -319,7 +328,7 @@ const _fetchPaymentDetailsForExport = async (start, end, gym, scheduleId) => {
   );
 
   return rows.map((r) => ({
-    date_booking: dayjs.utc(r.date_booking).format("YYYY-MM-DD"),
+    date_booking: dayjs(r.date_booking).tz(GYM_TZ).format("YYYY-MM-DD"),
     client_name: r.client_name ?? "",
     gym: _formatGymName(r.gym_enum),
     start_time: (r.start_time || "").slice(0, 5),
@@ -330,7 +339,7 @@ const _fetchPaymentDetailsForExport = async (start, end, gym, scheduleId) => {
     course_amount: Number(r.course_amount),
     other_amount: Number(r.other_amount),
     total_amount: Number(r.rent_amount) + Number(r.course_amount) + Number(r.other_amount),
-    created_date: dayjs(r.created_date).format("YYYY-MM-DD HH:mm:ss"),
+    created_date: dayjs(r.created_date).tz(GYM_TZ).format("YYYY-MM-DD HH:mm:ss"),
   }));
 };
 

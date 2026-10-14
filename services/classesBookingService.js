@@ -125,6 +125,28 @@ const _validateBooking = (bookingData, performedByUser) => {
 };
 
 /**
+ * The class type of a booking always comes from its schedule. A client
+ * sending is_private that disagrees with the chosen schedule (e.g. the
+ * customer picked a group slot, then switched to Private without picking
+ * again) is rejected instead of saving a private booking on a group class.
+ */
+const _resolveIsPrivate = (isPrivate, schedule) => {
+  const scheduleIsPrivate = Boolean(schedule.is_private_class);
+
+  if (isPrivate !== undefined && isPrivate !== null && Boolean(isPrivate) !== scheduleIsPrivate) {
+    const error = new Error(
+      scheduleIsPrivate
+        ? "คลาสที่เลือกเป็นคลาสส่วนตัว (Private) กรุณาเลือกประเภทคลาสให้ตรงกัน"
+        : "คลาสที่เลือกเป็นคลาสกลุ่ม (Group) กรุณาเลือกคลาสส่วนตัวใหม่อีกครั้ง",
+    );
+    error.status = 400;
+    throw error;
+  }
+
+  return scheduleIsPrivate;
+};
+
+/**
  * Checks seat availability for a class.
  */
 const _checkAvailability = async (
@@ -283,6 +305,7 @@ const createBooking = async (bookingData, performedByUser = null) => {
       error.status = 404;
       throw error;
     }
+    const resolvedIsPrivate = _resolveIsPrivate(is_private, schedule);
 
     // 4. Create the booking
     newBooking = await ClassesBooking.create(
@@ -293,7 +316,7 @@ const createBooking = async (bookingData, performedByUser = null) => {
         client_phone,
         booking_status: BOOKING_STATUS.SUCCEED,
         capacity,
-        is_private: is_private || false,
+        is_private: resolvedIsPrivate,
         date_booking: normalizedBookingDate,
         created_by:
           performedByUser?.name ||
@@ -341,7 +364,7 @@ const createBooking = async (bookingData, performedByUser = null) => {
       sendEmailBookingConfirmation(
         client_email,
         client_name,
-        is_private,
+        newBooking.is_private,
         date_booking,
         newBooking,
         classes_schedule_id,
@@ -407,6 +430,7 @@ const updateBooking = async (bookingId, updateData, performedByUser = null) => {
       error.status = 404;
       throw error;
     }
+    const resolvedIsPrivate = _resolveIsPrivate(is_private, schedule);
 
     const oldValues = {
       classes_schedule_id: booking.classes_schedule_id,
@@ -422,7 +446,7 @@ const updateBooking = async (bookingId, updateData, performedByUser = null) => {
         client_email,
         client_phone,
         capacity,
-        is_private,
+        is_private: resolvedIsPrivate,
         date_booking: normalizedBookingDate,
         gyms_id: schedule.gyms_id,
         gyms_enum: schedule.gym_enum,

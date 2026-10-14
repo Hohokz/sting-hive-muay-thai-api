@@ -49,9 +49,15 @@ const getTrainersByGym = async (gymId, options = {}) => {
         // FK — ClassesBooking.trainer is free text. Two trainers sharing a
         // name would incorrectly be treated as the same person. Fixing this
         // properly needs a trainer_id column + migration.
-        const busyTrainerNames = bookings.map(b => b.trainer).filter(Boolean);
+        // A private booking can name several trainers as "A, B"
+        const busyTrainerNames = new Set(
+          bookings
+            .flatMap(b => (b.trainer || "").split(","))
+            .map(name => name.trim())
+            .filter(Boolean)
+        );
 
-        trainers = trainers.filter(t => !busyTrainerNames.includes(t.name));
+        trainers = trainers.filter(t => !busyTrainerNames.has(t.name));
       }
     }
 

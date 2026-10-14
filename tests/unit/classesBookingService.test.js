@@ -105,6 +105,81 @@ describe('ClassesBookingService', () => {
 
       await expect(classesBookingService.createBooking(bookingData)).rejects.toThrow('ที่นั่งไม่พอ');
     });
+
+    describe('class type must match the schedule', () => {
+      const bookingData = {
+        classes_schedule_id: 1,
+        client_name: 'Test Customer',
+        client_email: 'test@example.com',
+        capacity: 1,
+        date_booking: '2026-12-01'
+      };
+      const groupSchedule = { id: 1, gyms_id: 1, gym_enum: 'STING_CLUB', is_private_class: false };
+      const privateSchedule = { ...groupSchedule, is_private_class: true };
+
+      beforeEach(() => {
+        getScheduleRealtimeAvailability.mockResolvedValue({
+          maxCapacity: 10,
+          currentBookingCount: 0,
+          isCloseGym: false,
+          isClassClosed: false
+        });
+        ClassesBooking.create.mockResolvedValue({ id: 99 });
+      });
+
+      test('rejects a private booking on a group schedule', async () => {
+        getSchedulesById.mockResolvedValue(groupSchedule);
+
+        await expect(
+          classesBookingService.createBooking({ ...bookingData, is_private: true })
+        ).rejects.toMatchObject({ status: 400 });
+        expect(ClassesBooking.create).not.toHaveBeenCalled();
+      });
+
+      test('rejects a group booking on a private schedule', async () => {
+        getSchedulesById.mockResolvedValue(privateSchedule);
+
+        await expect(
+          classesBookingService.createBooking({ ...bookingData, is_private: false })
+        ).rejects.toMatchObject({ status: 400 });
+        expect(ClassesBooking.create).not.toHaveBeenCalled();
+      });
+
+      test('takes is_private from the schedule when the client omits it', async () => {
+        getSchedulesById.mockResolvedValue(privateSchedule);
+
+        await classesBookingService.createBooking(bookingData);
+
+        expect(ClassesBooking.create.mock.calls[0][0].is_private).toBe(true);
+      });
+    });
+  });
+
+  describe('updateBooking', () => {
+    const updateData = {
+      classes_schedule_id: 2,
+      client_name: 'Test Customer',
+      client_email: 'test@example.com',
+      capacity: 1,
+      date_booking: '2026-12-01'
+    };
+
+    test('rejects moving a private booking onto a group schedule', async () => {
+      const booking = { id: 5, classes_schedule_id: 1, capacity: 1, date_booking: '2026-12-01', update: jest.fn() };
+      ClassesBooking.findByPk.mockResolvedValue(booking);
+      getScheduleRealtimeAvailability.mockResolvedValue({
+        maxCapacity: 10,
+        currentBookingCount: 0,
+        isCloseGym: false,
+        isClassClosed: false
+      });
+      getSchedulesById.mockResolvedValue({ id: 2, gyms_id: 1, gym_enum: 'STING_CLUB', is_private_class: false });
+
+      await expect(
+        classesBookingService.updateBooking(5, { ...updateData, is_private: true })
+      ).rejects.toMatchObject({ status: 400 });
+      expect(booking.update).not.toHaveBeenCalled();
+    });
   });
 
   describe('updateBookingStatus', () => {

@@ -62,6 +62,59 @@ describe('TrainerGymService', () => {
       expect(result).toHaveLength(1);
       expect(result[0].name).toBe('Trainer B');
     });
+
+    test('should treat every trainer in a multi-trainer booking ("A, B") as busy', async () => {
+      Gyms.findByPk.mockResolvedValue({
+        id: 1,
+        trainers: [
+          { id: 10, name: 'Trainer A' },
+          { id: 11, name: 'Trainer B' },
+          { id: 12, name: 'Trainer C' }
+        ]
+      });
+      ClassesBooking.findAll.mockResolvedValue([{ trainer: 'Trainer A, Trainer B' }]);
+
+      const result = await trainerGymService.getTrainersByGym(1, {
+        date: '2024-03-05',
+        classes_schedule_id: 100
+      });
+
+      expect(result.map(t => t.name)).toEqual(['Trainer C']);
+    });
+
+    test('should ignore blank / null trainers and stray commas or spaces', async () => {
+      Gyms.findByPk.mockResolvedValue({
+        id: 1,
+        trainers: [{ id: 10, name: 'Trainer A' }, { id: 11, name: 'Trainer B' }]
+      });
+      ClassesBooking.findAll.mockResolvedValue([
+        { trainer: '' },
+        { trainer: null },
+        { trainer: ' ,  Trainer B ,, ' }
+      ]);
+
+      const result = await trainerGymService.getTrainersByGym(1, {
+        date: '2024-03-05',
+        classes_schedule_id: 100
+      });
+
+      expect(result.map(t => t.name)).toEqual(['Trainer A']);
+    });
+
+    test('should not treat a trainer as busy just because their name is a substring of another', async () => {
+      Gyms.findByPk.mockResolvedValue({
+        id: 1,
+        trainers: [{ id: 10, name: 'Kru A' }, { id: 11, name: 'Kru AB' }]
+      });
+      ClassesBooking.findAll.mockResolvedValue([{ trainer: 'Kru AB' }]);
+
+      const result = await trainerGymService.getTrainersByGym(1, {
+        date: '2024-03-05',
+        classes_schedule_id: 100
+      });
+
+      expect(result.map(t => t.name)).toEqual(['Kru A']);
+    });
   });
 
   describe('assignTrainerToGym', () => {
