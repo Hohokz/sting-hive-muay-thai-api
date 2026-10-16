@@ -409,12 +409,15 @@ const updateBooking = async (bookingId, updateData, performedByUser = null) => {
       throw error;
     }
 
-    // 3. If the class, date, or seat count changed, re-check availability
+    // 3. If the class, date, or seat count changed, re-check availability.
+    // Keeping or shrinking the seats in the same slot frees seats rather than
+    // taking any, so it's allowed even if the slot is now over capacity
+    // (e.g. its capacity was lowered later) or closed by an advance rule.
     const isSameSlot =
       dayjs(date_booking).isSame(dayjs(booking.date_booking), "day") &&
       classes_schedule_id === booking.classes_schedule_id;
 
-    if (capacity !== booking.capacity || !isSameSlot) {
+    if (!isSameSlot || capacity > booking.capacity) {
       await _checkAvailability(
         classes_schedule_id,
         transaction,

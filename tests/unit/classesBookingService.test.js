@@ -180,6 +180,84 @@ describe('ClassesBookingService', () => {
       ).rejects.toMatchObject({ status: 400 });
       expect(booking.update).not.toHaveBeenCalled();
     });
+
+    describe('changing the seat count in the same slot', () => {
+      const sameSlot = { classes_schedule_id: 1, date_booking: '2026-12-01', is_private: false };
+      const mockBooking = (capacity) => ({
+        id: 5,
+        classes_schedule_id: 1,
+        capacity,
+        date_booking: '2026-12-01',
+        update: jest.fn().mockImplementation(async (data) => ({ id: 5, ...data }))
+      });
+
+      beforeEach(() => {
+        getSchedulesById.mockResolvedValue({ id: 1, gyms_id: 1, gym_enum: 'STING_CLUB', is_private_class: false });
+      });
+
+      test('shrinking 4 → 2 is allowed even when the slot is now over capacity', async () => {
+        const booking = mockBooking(4);
+        ClassesBooking.findByPk.mockResolvedValue(booking);
+        // capacity was lowered to 3 after this booking of 4 (plus 1 other) was made
+        getScheduleRealtimeAvailability.mockResolvedValue({
+          maxCapacity: 3, currentBookingCount: 5, isCloseGym: false, isClassClosed: false
+        });
+
+        await classesBookingService.updateBooking(5, { ...updateData, ...sameSlot, capacity: 2 });
+
+        expect(getScheduleRealtimeAvailability).not.toHaveBeenCalled();
+        expect(booking.update).toHaveBeenCalledWith(expect.objectContaining({ capacity: 2 }), expect.any(Object));
+      });
+
+      test('shrinking is allowed even when the class was closed by an advance rule', async () => {
+        const booking = mockBooking(4);
+        ClassesBooking.findByPk.mockResolvedValue(booking);
+        getScheduleRealtimeAvailability.mockResolvedValue({
+          maxCapacity: 0, currentBookingCount: 4, isCloseGym: false, isClassClosed: true, closuresReason: 'Class Closed'
+        });
+
+        await classesBookingService.updateBooking(5, { ...updateData, ...sameSlot, capacity: 1 });
+
+        expect(booking.update).toHaveBeenCalled();
+      });
+
+      test('growing 2 → 4 is still checked against free seats (own seats count as free)', async () => {
+        const booking = mockBooking(2);
+        ClassesBooking.findByPk.mockResolvedValue(booking);
+        // 5 seats, 2 ours + 2 others → only 3 available to us
+        getScheduleRealtimeAvailability.mockResolvedValue({
+          maxCapacity: 5, currentBookingCount: 4, isCloseGym: false, isClassClosed: false
+        });
+
+        await expect(
+          classesBookingService.updateBooking(5, { ...updateData, ...sameSlot, capacity: 4 })
+        ).rejects.toMatchObject({ status: 409 });
+        expect(booking.update).not.toHaveBeenCalled();
+      });
+
+      test('growing 2 → 3 fits exactly', async () => {
+        const booking = mockBooking(2);
+        ClassesBooking.findByPk.mockResolvedValue(booking);
+        getScheduleRealtimeAvailability.mockResolvedValue({
+          maxCapacity: 5, currentBookingCount: 4, isCloseGym: false, isClassClosed: false
+        });
+
+        await classesBookingService.updateBooking(5, { ...updateData, ...sameSlot, capacity: 3 });
+        expect(booking.update).toHaveBeenCalled();
+      });
+
+      test('moving to another slot with fewer seats is still checked, even when shrinking', async () => {
+        const booking = mockBooking(4);
+        ClassesBooking.findByPk.mockResolvedValue(booking);
+        getScheduleRealtimeAvailability.mockResolvedValue({
+          maxCapacity: 1, currentBookingCount: 0, isCloseGym: false, isClassClosed: false
+        });
+
+        await expect(
+          classesBookingService.updateBooking(5, { ...updateData, ...sameSlot, classes_schedule_id: 2, capacity: 2 })
+        ).rejects.toMatchObject({ status: 409 });
+      });
+    });
   });
 
   describe('updateBookingStatus', () => {
