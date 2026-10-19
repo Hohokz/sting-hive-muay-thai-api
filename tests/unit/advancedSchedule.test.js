@@ -5,17 +5,20 @@ const {
   Gyms,
   ClassesSchedule,
   ClassesCapacity,
-  ClassesBooking,
   ClassesBookingInAdvance
 } = require('../../models/Associations');
 const activityLogService = require('../../services/activityLogService');
 const cacheUtil = require('../../utils/cacheUtility');
+const { sumBookingSeats } = require('../../utils/bookingSeats');
 
 const mockTransaction = {
   commit: jest.fn(),
   rollback: jest.fn(),
   LOCK: { UPDATE: 'UPDATE' }
 };
+
+// Seat totals (COALESCE(private_trainers, capacity)) — see utils/bookingSeats
+jest.mock('../../utils/bookingSeats', () => ({ sumBookingSeats: jest.fn(), bookingSeats: jest.fn() }));
 
 jest.mock('../../models/Associations', () => ({
   Gyms: { findByPk: jest.fn(), findOne: jest.fn() },
@@ -85,7 +88,7 @@ describe('Booking in advance', () => {
       const result = await classesScheduleService.getScheduleRealtimeAvailability('s1', '2026-10-01');
 
       expect(result).toMatchObject({ isCloseGym: true, isClassClosed: true, availableSeats: 0 });
-      expect(ClassesBooking.sum).not.toHaveBeenCalled();
+      expect(sumBookingSeats).not.toHaveBeenCalled();
     });
 
     test('returns class closed when a schedule-level closure covers the date', async () => {
@@ -102,7 +105,7 @@ describe('Booking in advance', () => {
       ClassesBookingInAdvance.findOne
         .mockResolvedValueOnce(null)
         .mockResolvedValueOnce({ id: 'c3', is_close_gym: false, capacity: 5 });
-      ClassesBooking.sum.mockResolvedValue(2);
+      sumBookingSeats.mockResolvedValue(2);
 
       const result = await classesScheduleService.getScheduleRealtimeAvailability('s1', '2026-10-01');
 
@@ -113,7 +116,7 @@ describe('Booking in advance', () => {
     test('falls back to the standard capacity when no config covers the date', async () => {
       ClassesBookingInAdvance.findOne.mockResolvedValue(null);
       ClassesCapacity.findOne.mockResolvedValue({ capacity: 10 });
-      ClassesBooking.sum.mockResolvedValue(4);
+      sumBookingSeats.mockResolvedValue(4);
 
       const result = await classesScheduleService.getScheduleRealtimeAvailability('s1', '2026-10-01');
 
@@ -124,7 +127,7 @@ describe('Booking in advance', () => {
       ClassesBookingInAdvance.findOne
         .mockResolvedValueOnce(null)
         .mockResolvedValueOnce({ id: 'c4', is_close_gym: false, capacity: 3 });
-      ClassesBooking.sum.mockResolvedValue(5);
+      sumBookingSeats.mockResolvedValue(5);
 
       const result = await classesScheduleService.getScheduleRealtimeAvailability('s1', '2026-10-01');
 
@@ -134,7 +137,7 @@ describe('Booking in advance', () => {
     test('matches configs by calendar date, inclusive of both ends', async () => {
       ClassesBookingInAdvance.findOne.mockResolvedValue(null);
       ClassesCapacity.findOne.mockResolvedValue({ capacity: 10 });
-      ClassesBooking.sum.mockResolvedValue(0);
+      sumBookingSeats.mockResolvedValue(0);
 
       await classesScheduleService.getScheduleRealtimeAvailability('s1', '2026-10-05');
 
@@ -149,7 +152,7 @@ describe('Booking in advance', () => {
     test('reads Date/ISO input as a Thai calendar date', async () => {
       ClassesBookingInAdvance.findOne.mockResolvedValue(null);
       ClassesCapacity.findOne.mockResolvedValue({ capacity: 10 });
-      ClassesBooking.sum.mockResolvedValue(0);
+      sumBookingSeats.mockResolvedValue(0);
 
       // 2026-10-04T18:00Z is 01:00 on 5 Oct in Thailand
       await classesScheduleService.getScheduleRealtimeAvailability('s1', new Date('2026-10-04T18:00:00Z'));
@@ -337,7 +340,7 @@ describe('Booking in advance', () => {
       ClassesSchedule.findByPk.mockResolvedValue({ id: 's1', gyms_id: 1 });
       ClassesCapacity.findOne.mockResolvedValue({ capacity: 10 });
       Gyms.findByPk.mockResolvedValue({ id: 1, gym_name: 'Sting Club', gym_enum: 'STING_CLUB' });
-      ClassesBooking.sum.mockResolvedValue(0);
+      sumBookingSeats.mockResolvedValue(0);
       ClassesBookingInAdvance.create.mockImplementation(async (data) => makeConfig(data));
     });
 
@@ -377,7 +380,7 @@ describe('Booking in advance', () => {
     });
 
     test('returns a warning when existing bookings exceed the new capacity', async () => {
-      ClassesBooking.sum.mockResolvedValue(8);
+      sumBookingSeats.mockResolvedValue(8);
 
       const result = await classesScheduleService.createAdvancedSchedule(
         { schedule_id: 's1', capacity: 5, ...activeRange() },
@@ -421,7 +424,7 @@ describe('Booking in advance', () => {
         expect.objectContaining({ details: expect.objectContaining({ rule_type: 'CLASS_CLOSED' }) }),
         { transaction: mockTransaction }
       );
-      expect(ClassesBooking.sum).not.toHaveBeenCalled();
+      expect(sumBookingSeats).not.toHaveBeenCalled();
       expect(ClassesSchedule.update).not.toHaveBeenCalled();
     });
 
@@ -473,7 +476,7 @@ describe('Booking in advance', () => {
     beforeEach(() => {
       ClassesSchedule.findByPk.mockResolvedValue({ id: 's1', gyms_id: 1 });
       ClassesCapacity.findOne.mockResolvedValue({ capacity: 10 });
-      ClassesBooking.sum.mockResolvedValue(0);
+      sumBookingSeats.mockResolvedValue(0);
     });
 
     test('updates the capacity without touching the standard capacity', async () => {
@@ -515,7 +518,7 @@ describe('Booking in advance', () => {
 
       await classesScheduleService.updateAdvancedSchedule('adv-1', {}, admin);
 
-      expect(ClassesBooking.sum).not.toHaveBeenCalled();
+      expect(sumBookingSeats).not.toHaveBeenCalled();
     });
 
     test('turns a gym closure into a capacity override', async () => {
@@ -672,7 +675,7 @@ describe('Booking in advance', () => {
       ClassesSchedule.findByPk.mockResolvedValue({ id: 's1', gyms_id: 1 });
       ClassesBookingInAdvance.findOne.mockResolvedValue(null);
       ClassesCapacity.findOne.mockResolvedValue({ capacity: 12 });
-      ClassesBooking.sum.mockResolvedValue(0);
+      sumBookingSeats.mockResolvedValue(0);
 
       const result = await classesScheduleService.getScheduleRealtimeAvailability(
         's1',

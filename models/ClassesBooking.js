@@ -54,6 +54,11 @@ const ClassesBooking = sequelize.define('CLASSES_BOOKING', {
         allowNull: true,
     },
     multipleStudents: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+    // Trainers a private booking takes — its seat count, since a private
+    // class's seats are standby trainers. NULL on group bookings and on
+    // private bookings made before this column existed (those use `capacity`).
+    // Added by scripts/migrations/add-private-trainers.js
+    private_trainers: { type: DataTypes.INTEGER, allowNull: true },
 }, { tableName: 'classes_booking', timestamps: false });
 
 module.exports = ClassesBooking;

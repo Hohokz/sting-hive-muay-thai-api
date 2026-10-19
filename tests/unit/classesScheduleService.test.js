@@ -3,13 +3,16 @@ const {
   Gyms,
   ClassesSchedule,
   ClassesCapacity,
-  ClassesBooking,
   ClassesBookingInAdvance
 } = require('../../models/Associations');
 const activityLogService = require('../../services/activityLogService');
 const cacheUtil = require('../../utils/cacheUtility');
+const { sumBookingSeats } = require('../../utils/bookingSeats');
 
 // Mock Models
+// Seat totals (COALESCE(private_trainers, capacity)) — see utils/bookingSeats
+jest.mock('../../utils/bookingSeats', () => ({ sumBookingSeats: jest.fn(), bookingSeats: jest.fn() }));
+
 jest.mock('../../models/Associations', () => ({
   Gyms: { count: jest.fn() },
   ClassesSchedule: {
@@ -120,7 +123,7 @@ describe('ClassesScheduleService', () => {
       ClassesSchedule.findByPk.mockResolvedValue(mockSchedule);
       ClassesBookingInAdvance.findOne.mockResolvedValue(null); // No gym closure or advance config
       ClassesCapacity.findOne.mockResolvedValue({ capacity: 10 });
-      ClassesBooking.sum.mockResolvedValue(0); // No bookings yet
+      sumBookingSeats.mockResolvedValue(0); // No bookings yet
 
       const result = await classesScheduleService.getAvailableSchedulesByBookingDate('2024-03-05', 'STING_CLUB');
 

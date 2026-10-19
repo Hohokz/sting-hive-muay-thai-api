@@ -18,6 +18,7 @@ const {
 const activityLogService = require("./activityLogService");
 const cacheUtil = require("../utils/cacheUtility");
 const { isMonthDeletable, getMonthRange } = require("../utils/monthGuard");
+const { bookingSeats } = require("../utils/bookingSeats");
 
 const { BOOKING_STATUS, USER_ROLE } = require("../models/Enums");
 
@@ -122,6 +123,61 @@ const _validateBooking = (bookingData, performedByUser) => {
   }
 
   return bookingDateObj.toDate();
+};
+
+// Private class rules for customers: 1 trainer teaches up to 2 students,
+// at most 5 students (so at most 3 trainers). Admins only keep the 1:2 rule.
+const PRIVATE_MAX_STUDENTS = 5;
+const PRIVATE_MAX_TRAINERS = 3;
+const STUDENTS_PER_TRAINER = 2;
+
+/**
+ * Validates the trainer/student split of a private booking and returns what to
+ * store: `private_trainers` (its seat count) and `multipleStudents` (derived,
+ * so it can't disagree with the counts). A private payload without
+ * private_trainers (an older client) is stored as before — NULL, so it takes
+ * `capacity` seats. Group bookings never carry private_trainers.
+ */
+const _resolvePrivateSetup = (bookingData, performedByUser) => {
+  const { is_private, capacity, private_trainers, multiple_students } = bookingData;
+  const isAdmin = performedByUser?.role === USER_ROLE.ADMIN;
+  const fail = (message) => {
+    const error = new Error(message);
+    error.status = 400;
+    throw error;
+  };
+
+  if (!is_private) {
+    if (private_trainers !== undefined && private_trainers !== null) {
+      fail("ระบุจำนวนครูได้เฉพาะคลาสส่วนตัว (Private) เท่านั้น");
+    }
+    return { privateTrainers: null, multipleStudents: false };
+  }
+
+  if (private_trainers === undefined || private_trainers === null) {
+    return { privateTrainers: null, multipleStudents: Boolean(multiple_students) };
+  }
+
+  if (!Number.isInteger(private_trainers) || private_trainers < 1) {
+    fail("จำนวนครูไม่ถูกต้อง");
+  }
+  if (private_trainers > capacity) {
+    fail("จำนวนครูต้องไม่มากกว่าจำนวนผู้เรียน");
+  }
+  if (private_trainers * STUDENTS_PER_TRAINER < capacity) {
+    fail(`ครู 1 คนรับผู้เรียนได้สูงสุด ${STUDENTS_PER_TRAINER} คน กรุณาเพิ่มจำนวนครู`);
+  }
+  if (!isAdmin && capacity > PRIVATE_MAX_STUDENTS) {
+    fail(`คลาสส่วนตัวรับผู้เรียนได้สูงสุด ${PRIVATE_MAX_STUDENTS} คน`);
+  }
+  if (!isAdmin && private_trainers > PRIVATE_MAX_TRAINERS) {
+    fail(`คลาสส่วนตัวเลือกครูได้สูงสุด ${PRIVATE_MAX_TRAINERS} คน`);
+  }
+
+  return {
+    privateTrainers: private_trainers,
+    multipleStudents: capacity > private_trainers,
+  };
 };
 
 /**
@@ -276,7 +332,6 @@ const createBooking = async (bookingData, performedByUser = null) => {
     is_private,
     date_booking,
     trainer,
-    multiple_students,
   } = bookingData;
 
   // 0. Reject a payload missing required fields
@@ -284,17 +339,22 @@ const createBooking = async (bookingData, performedByUser = null) => {
 
   // 1. Validate the booking request
   const normalizedBookingDate = _validateBooking(bookingData, performedByUser);
+  const { privateTrainers, multipleStudents } = _resolvePrivateSetup(
+    bookingData,
+    performedByUser,
+  );
 
   const transaction = await sequelize.transaction();
   let newBooking = null;
 
   try {
-    // 2. Check seat availability (locks the row to prevent a race condition)
+    // 2. Check seat availability (locks the row to prevent a race condition).
+    // A private booking takes one seat per trainer.
     await _checkAvailability(
       classes_schedule_id,
       transaction,
       0,
-      capacity,
+      bookingSeats({ capacity, private_trainers: privateTrainers }),
       normalizedBookingDate,
     );
 
@@ -326,7 +386,8 @@ const createBooking = async (bookingData, performedByUser = null) => {
         gyms_id: schedule.gyms_id,
         gyms_enum: schedule.gym_enum,
         trainer: trainer || "",
-        multipleStudents: multiple_students || false,
+        multipleStudents,
+        private_trainers: privateTrainers,
       },
       { transaction },
     );
@@ -346,6 +407,7 @@ const createBooking = async (bookingData, performedByUser = null) => {
         client_name,
         date_booking: normalizedBookingDate,
         capacity,
+        private_trainers: privateTrainers,
       },
     });
 
@@ -388,7 +450,6 @@ const updateBooking = async (bookingId, updateData, performedByUser = null) => {
     is_private,
     date_booking,
     trainer,
-    multiple_students,
   } = updateData;
 
   // 0. Reject a payload missing required fields
@@ -409,20 +470,41 @@ const updateBooking = async (bookingId, updateData, performedByUser = null) => {
       throw error;
     }
 
+    // A client that doesn't know about private_trainers (an older page) leaves
+    // it out — keep the stored count rather than wiping it, as long as it
+    // still fits the new student count; otherwise fall back to `capacity` seats
+    let privateSetup;
+    if (updateData.private_trainers === undefined && booking.private_trainers !== null) {
+      try {
+        privateSetup = _resolvePrivateSetup(
+          { ...updateData, private_trainers: booking.private_trainers },
+          performedByUser,
+        );
+      } catch {
+        privateSetup = _resolvePrivateSetup(updateData, performedByUser);
+      }
+    } else {
+      privateSetup = _resolvePrivateSetup(updateData, performedByUser);
+    }
+    const { privateTrainers, multipleStudents } = privateSetup;
+
     // 3. If the class, date, or seat count changed, re-check availability.
+    // Seats are students for a group booking and trainers for a private one.
     // Keeping or shrinking the seats in the same slot frees seats rather than
     // taking any, so it's allowed even if the slot is now over capacity
     // (e.g. its capacity was lowered later) or closed by an advance rule.
     const isSameSlot =
       dayjs(date_booking).isSame(dayjs(booking.date_booking), "day") &&
       classes_schedule_id === booking.classes_schedule_id;
+    const oldSeats = bookingSeats(booking);
+    const newSeats = bookingSeats({ capacity, private_trainers: privateTrainers });
 
-    if (!isSameSlot || capacity > booking.capacity) {
+    if (!isSameSlot || newSeats > oldSeats) {
       await _checkAvailability(
         classes_schedule_id,
         transaction,
-        isSameSlot ? booking.capacity : 0,
-        capacity,
+        isSameSlot ? oldSeats : 0,
+        newSeats,
         normalizedBookingDate,
       );
     }
@@ -438,6 +520,7 @@ const updateBooking = async (bookingId, updateData, performedByUser = null) => {
     const oldValues = {
       classes_schedule_id: booking.classes_schedule_id,
       capacity: booking.capacity,
+      private_trainers: booking.private_trainers,
       date_booking: booking.date_booking,
     };
 
@@ -454,7 +537,8 @@ const updateBooking = async (bookingId, updateData, performedByUser = null) => {
         gyms_id: schedule.gyms_id,
         gyms_enum: schedule.gym_enum,
         trainer: trainer || "",
-        multipleStudents: multiple_students || false,
+        multipleStudents,
+        private_trainers: privateTrainers,
         updated_by:
           performedByUser?.name ||
           performedByUser?.username ||
@@ -481,6 +565,7 @@ const updateBooking = async (bookingId, updateData, performedByUser = null) => {
         new_values: {
           classes_schedule_id,
           capacity,
+          private_trainers: privateTrainers,
           date_booking: normalizedBookingDate,
         },
       },
@@ -615,7 +700,7 @@ const updateBookingStatus = async (bookingId, newStatus, user) => {
         booking.classes_schedule_id,
         transaction,
         0,
-        booking.capacity,
+        bookingSeats(booking),
         booking.date_booking,
       );
     }
@@ -689,11 +774,31 @@ const updateBookingTrainer = async (
       throw error;
     }
 
+    // A private booking can name one trainer per trainer it booked ("A, B")
+    const names = String(trainer || "")
+      .split(",")
+      .map((name) => name.trim())
+      .filter(Boolean);
+    const fail = (message) => {
+      const error = new Error(message);
+      error.status = 400;
+      throw error;
+    };
+    if (new Set(names).size !== names.length) {
+      fail("ระบุเทรนเนอร์ซ้ำกันไม่ได้");
+    }
+    // Older bookings without a trainer count can still have one per student
+    const maxNames = booking.private_trainers ?? booking.capacity;
+    if (names.length > maxNames) {
+      fail(`การจองนี้ระบุเทรนเนอร์ได้สูงสุด ${maxNames} คน`);
+    }
+    const trainerField = names.join(", ");
+
     const oldTrainer = booking.trainer;
     const actorName = _resolveActorName(performedByUser, booking.client_name);
 
     await booking.update({
-      trainer: trainer || "",
+      trainer: trainerField,
       updated_by: actorName,
       updated_date: new Date(),
     });
@@ -706,7 +811,7 @@ const updateBookingTrainer = async (
       details: {
         booking_id: bookingId,
         old_trainer: oldTrainer,
-        new_trainer: trainer,
+        new_trainer: trainerField,
       },
     });
 
@@ -1036,6 +1141,7 @@ const BOOKING_EXPORT_FIELDS = [
   { label: "Capacity", value: "capacity" },
   { label: "Admin Note", value: "admin_note" },
   { label: "Trainer", value: "trainer" },
+  { label: "Trainer Count", value: "private_trainers" },
   { label: "Start Time", value: "start_time" },
   { label: "End Time", value: "end_time" },
   { label: "Gym", value: "gyms" },
@@ -1074,6 +1180,7 @@ const _fetchBookingsForExport = async (start_date, end_date) => {
       "capacity",
       "admin_note",
       "trainer",
+      "private_trainers",
       "created_by",
       "created_date",
       "updated_by",
@@ -1108,6 +1215,7 @@ const _fetchBookingsForExport = async (start_date, end_date) => {
       capacity: b.capacity ?? "",
       admin_note: b.admin_note ?? "",
       trainer: b.trainer ?? "",
+      private_trainers: b.private_trainers ?? "",
       start_time: b.schedule?.start_time ?? "",
       end_time: b.schedule?.end_time ?? "",
       gyms: b.schedule?.gyms?.gym_name ?? "",

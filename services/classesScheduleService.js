@@ -4,7 +4,6 @@ const {
   Gyms,
   ClassesSchedule,
   ClassesCapacity,
-  ClassesBooking,
   ClassesBookingInAdvance,
 } = require("../models/Associations");
 const { Op } = require("sequelize");
@@ -13,6 +12,7 @@ const utc = require("dayjs/plugin/utc");
 
 const activityLogService = require("./activityLogService");
 const cacheUtil = require("../utils/cacheUtility");
+const { sumBookingSeats } = require("../utils/bookingSeats");
 const { BOOKING_STATUS, GYM_ENUM } = require("../models/Enums");
 
 dayjs.extend(utc);
@@ -578,16 +578,15 @@ const getScheduleRealtimeAvailability = async (
     maxCapacity = capacityData?.capacity || 0;
   }
 
-  // 3. Count seats already booked
-  const currentBookingCount =
-    (await ClassesBooking.sum("capacity", {
-      where: {
-        classes_schedule_id: scheduleId,
-        date_booking: { [Op.between]: [startOfDay, endOfDay] },
-        booking_status: { [Op.notIn]: ACTIVE_BOOKING_STATUSES_EXCLUDED },
-      },
-      transaction,
-    })) || 0;
+  // 3. Count seats already booked (private bookings take one per trainer)
+  const currentBookingCount = await sumBookingSeats(
+    {
+      classes_schedule_id: scheduleId,
+      date_booking: { [Op.between]: [startOfDay, endOfDay] },
+      booking_status: { [Op.notIn]: ACTIVE_BOOKING_STATUSES_EXCLUDED },
+    },
+    { transaction },
+  );
 
   return {
     schedule,
@@ -640,15 +639,14 @@ const _checkAvailability = async (
   const startOfDay = dayjs(startDate).startOf("day").toDate();
   const endOfDay = dayjs(endDate).endOf("day").toDate();
 
-  const currentBookingCount =
-    (await ClassesBooking.sum("capacity", {
-      where: {
-        classes_schedule_id: classesScheduleId,
-        date_booking: { [Op.between]: [startOfDay, endOfDay] },
-        booking_status: { [Op.notIn]: ACTIVE_BOOKING_STATUSES_EXCLUDED },
-      },
-      transaction,
-    })) || 0;
+  const currentBookingCount = await sumBookingSeats(
+    {
+      classes_schedule_id: classesScheduleId,
+      date_booking: { [Op.between]: [startOfDay, endOfDay] },
+      booking_status: { [Op.notIn]: ACTIVE_BOOKING_STATUSES_EXCLUDED },
+    },
+    { transaction },
+  );
 
   const maxCapacity = capacity !== undefined ? capacity : capacityData.capacity;
 

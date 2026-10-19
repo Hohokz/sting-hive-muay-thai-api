@@ -1,6 +1,9 @@
 const dashboardService = require('../../services/dashboardService');
 const { ClassesBooking, ClassesSchedule } = require('../../models/Associations');
 
+jest.mock('../../utils/bookingSeats', () => ({ sumBookingSeats: jest.fn() }));
+const { sumBookingSeats } = require('../../utils/bookingSeats');
+
 jest.mock('../../models/Associations', () => ({
   ClassesBooking: {
     count: jest.fn(),
@@ -29,6 +32,21 @@ describe('DashboardService', () => {
       expect(ClassesBooking.sum).toHaveBeenCalled();
       expect(result.todayBooking).toBe(10);
       expect(result.totalCapacityToday).toBe(25);
+    });
+
+    test('reports private trainers booked from the seat total of private bookings', async () => {
+      ClassesBooking.count.mockResolvedValue(3);
+      ClassesBooking.sum.mockResolvedValue(9);
+      sumBookingSeats.mockResolvedValue(4);
+
+      const result = await dashboardService.getDashboardSummary('2024-03-05');
+
+      expect(result.isPrivateCapacity).toBe(9);
+      expect(result.privateTrainersBooked).toBe(4);
+      expect(sumBookingSeats).toHaveBeenCalledWith(
+        expect.objectContaining({ booking_status: 'SUCCEED' }),
+        { include: [expect.objectContaining({ as: 'schedule', where: { is_private_class: true } })] }
+      );
     });
   });
 

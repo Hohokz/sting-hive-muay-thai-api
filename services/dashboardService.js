@@ -4,6 +4,7 @@ const { sequelize } = require("../config/db");
 const dayjs = require("dayjs");
 const utc = require("dayjs/plugin/utc");
 const { BOOKING_STATUS } = require("../models/Enums");
+const { sumBookingSeats } = require("../utils/bookingSeats");
 
 dayjs.extend(utc);
 
@@ -26,7 +27,17 @@ const getDashboardSummary = async (targetDate = new Date()) => {
     };
 
     // Fetch counts and sums in parallel
-    const [todayCount, totalSum, groupSum, privateSum] = await Promise.all([
+    const privateOnly = [
+      {
+        model: ClassesSchedule,
+        as: "schedule",
+        required: true,
+        where: { is_private_class: true },
+        attributes: [],
+      },
+    ];
+
+    const [todayCount, totalSum, groupSum, privateSum, privateTrainers] = await Promise.all([
       // Total number of bookings
       ClassesBooking.count({ where: commonWhere }),
 
@@ -47,19 +58,12 @@ const getDashboardSummary = async (targetDate = new Date()) => {
         ],
       }),
 
-      // Total seats booked, private classes only
-      ClassesBooking.sum("capacity", {
-        where: commonWhere,
-        include: [
-          {
-            model: ClassesSchedule,
-            as: "schedule",
-            required: true,
-            where: { is_private_class: true },
-            attributes: [],
-          },
-        ],
-      }),
+      // Total students booked, private classes only
+      ClassesBooking.sum("capacity", { where: commonWhere, include: privateOnly }),
+
+      // Trainers booked for private classes (a private class's seats). Older
+      // private bookings without a trainer count fall back to their students.
+      sumBookingSeats(commonWhere, { include: privateOnly }),
     ]);
 
     return {
@@ -68,6 +72,7 @@ const getDashboardSummary = async (targetDate = new Date()) => {
       totalCapacityToday: totalSum || 0,
       isNotPrivateCapacity: groupSum || 0,
       isPrivateCapacity: privateSum || 0,
+      privateTrainersBooked: privateTrainers || 0,
     };
   } catch (error) {
     console.error("[DashboardService] getDashboardSummary Error:", error);
