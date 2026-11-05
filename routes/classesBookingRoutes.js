@@ -8,14 +8,20 @@ const {
   authorizeRole,
 } = require("../middlewares/authMiddleware");
 
+// Staff-only (dashboard) routes: they expose other clients' data or edit
+// payments, so an anonymous caller must not reach them.
+const requireStaff = [authenticateToken, authorizeRole(["ADMIN", "USER"])];
+
 // GET /api/v1/bookings?classes_schedule_id=...
-router.get("/", bookingController.getBookings);
+// Public, but an anonymous caller must filter by their own booking id or
+// email — see bookingController.getBookings.
+router.get("/", extractUserIfPresent, bookingController.getBookings);
 
 // Literal routes must be registered before the "/:name" wildcard below,
 // otherwise Express matches "/:name" first (e.g. name="trainers") and these
 // never get reached.
 // GET /api/v1/bookings/trainers
-router.get("/trainers", bookingController.getTrainerForRequest);
+router.get("/trainers", requireStaff, bookingController.getTrainerForRequest);
 // GET /api/v1/bookings/export — admin only, exports raw client data
 router.get(
   "/export",
@@ -55,29 +61,29 @@ router.delete(
 );
 
 // GET /api/v1/bookings/:name
-router.get("/:name", extractUserIfPresent, bookingController.getBookingByName);
+router.get("/:name", requireStaff, bookingController.getBookingByName);
 
 // POST /api/v1/bookings
 router.post("/", extractUserIfPresent, bookingController.createBooking);
 router.put(
   "/updateBookingTrainer/:id",
-  extractUserIfPresent,
+  requireStaff,
   bookingController.updateBookingTrainer,
 );
 router.put(
   "/updateBookingNote/:id",
-  extractUserIfPresent,
+  requireStaff,
   bookingController.updateBookingNote,
 );
 router.put("/:id", extractUserIfPresent, bookingController.updateBooking);
 router.put(
   "/:id/payment",
-  extractUserIfPresent,
+  requireStaff,
   bookingController.updateBookingPayment,
 );
 router.get(
   "/:id/payment",
-  extractUserIfPresent,
+  requireStaff,
   bookingController.getBookingPaymentDetail,
 );
 // PUT /api/v1/bookings/payment-entry/:entryId — edits one payment-history
@@ -86,18 +92,18 @@ router.get(
 // other payment routes for readability).
 router.put(
   "/payment-entry/:entryId",
-  extractUserIfPresent,
+  requireStaff,
   bookingController.updateBookingPaymentEntry,
 );
 // DELETE /api/v1/bookings/payment-entry/:entryId
 router.delete(
   "/payment-entry/:entryId",
-  extractUserIfPresent,
+  requireStaff,
   bookingController.deleteBookingPaymentEntry,
 );
 router.patch(
   "/:id/note",
-  extractUserIfPresent,
+  requireStaff,
   bookingController.updateBookingNote,
 );
 

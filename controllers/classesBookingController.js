@@ -212,6 +212,17 @@ exports.deleteBookingPaymentEntry = async (req, res) => {
  */
 exports.getBookings = async (req, res) => {
   try {
+    // Without a filter this lists every client's booking (names, emails,
+    // phones), so an anonymous caller may only look up their own booking.
+    // 400 rather than 401 so the web client doesn't bounce customers to login.
+    const { classes_booking_id, client_email } = req.query;
+    if (!req.user && !classes_booking_id && !client_email) {
+      return res.status(400).json({
+        success: false,
+        message: "กรุณาระบุรหัสการจองหรืออีเมล",
+      });
+    }
+
     const bookings = await classesBookingService.getBookings(req.query);
     res
       .status(200)

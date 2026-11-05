@@ -33,4 +33,18 @@ const sumBookingSeats = async (where, { transaction, include } = {}) => {
   return Number(row?.seats) || 0;
 };
 
-module.exports = { bookingSeats, sumBookingSeats };
+/** Seats taken per schedule, in one grouped query: Map<scheduleId, seats> */
+const sumBookingSeatsBySchedule = async (where, { transaction } = {}) => {
+  const rows = await ClassesBooking.findAll({
+    attributes: ["classes_schedule_id", [fn("SUM", SEATS_SQL), "seats"]],
+    where,
+    group: ["classes_schedule_id"],
+    transaction,
+    raw: true,
+  });
+  return new Map(
+    rows.map((r) => [r.classes_schedule_id, Number(r.seats) || 0]),
+  );
+};
+
+module.exports = { bookingSeats, sumBookingSeats, sumBookingSeatsBySchedule };

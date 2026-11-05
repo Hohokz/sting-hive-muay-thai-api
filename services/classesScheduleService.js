@@ -12,7 +12,10 @@ const utc = require("dayjs/plugin/utc");
 
 const activityLogService = require("./activityLogService");
 const cacheUtil = require("../utils/cacheUtility");
-const { sumBookingSeats } = require("../utils/bookingSeats");
+const {
+  sumBookingSeats,
+  sumBookingSeatsBySchedule,
+} = require("../utils/bookingSeats");
 const { BOOKING_STATUS, GYM_ENUM } = require("../models/Enums");
 
 dayjs.extend(utc);
@@ -394,25 +397,70 @@ const getAvailableSchedulesByBookingDate = async (
 
     const schedules = await ClassesSchedule.findAll({
       where: whereSchedule,
+      include: [{ model: ClassesCapacity, as: "capacity_data" }],
       order: [["start_time", "ASC"]],
     });
+    if (schedules.length === 0) return [];
 
-    // 2. Iterate and calculate availability using the shared function
+    // 2. Same rules as getScheduleRealtimeAvailability, but batched across
+    // all schedules: the DB is in another region, so each round trip costs
+    // ~250ms and the old per-schedule loop (5 queries each) took 6s+.
+    const { checkTime, startOfDay, endOfDay } = _getDateRange(date);
+    const scheduleIds = schedules.map((s) => s.id);
+    const gymIds = [...new Set(schedules.map((s) => s.gyms_id))];
+    const inEffect = {
+      start_date: { [Op.lte]: checkTime },
+      end_date: { [Op.gte]: checkTime },
+    };
+
+    const [gymClosures, advancedConfigs, seatsBySchedule] = await Promise.all([
+      ClassesBookingInAdvance.findAll({
+        attributes: ["gyms_id"],
+        where: {
+          gyms_id: { [Op.in]: gymIds },
+          is_close_gym: true,
+          classes_schedule_id: null,
+          ...inEffect,
+        },
+      }),
+      ClassesBookingInAdvance.findAll({
+        where: { classes_schedule_id: { [Op.in]: scheduleIds }, ...inEffect },
+        order: [["created_date", "DESC"]],
+      }),
+      sumBookingSeatsBySchedule({
+        classes_schedule_id: { [Op.in]: scheduleIds },
+        date_booking: { [Op.between]: [startOfDay, endOfDay] },
+        booking_status: { [Op.notIn]: ACTIVE_BOOKING_STATUSES_EXCLUDED },
+      }),
+    ]);
+
+    const closedGymIds = new Set(gymClosures.map((c) => c.gyms_id));
+    // Newest config wins, matching findOne(... order created_date DESC)
+    const latestConfigBySchedule = new Map();
+    for (const config of advancedConfigs) {
+      if (!latestConfigBySchedule.has(config.classes_schedule_id)) {
+        latestConfigBySchedule.set(config.classes_schedule_id, config);
+      }
+    }
+
     const availableSchedules = [];
 
     for (const schedule of schedules) {
-      // Note: this is an N+1 query pattern, but given the low N (classes per
-      // day), it's acceptable in exchange for reusing the shared logic below.
-      const availability = await getScheduleRealtimeAvailability(
-        schedule.id,
-        date,
-      );
-
       // A gym-wide closure hides the schedule entirely; a class-level closure
       // still surfaces further down via is_full/available_seats.
-      if (availability.isCloseGym) {
-        continue;
-      }
+      if (closedGymIds.has(schedule.gyms_id)) continue;
+
+      const config = latestConfigBySchedule.get(schedule.id);
+      const isClassClosed = Boolean(config?.is_close_gym);
+      const maxCapacity = isClassClosed
+        ? 0
+        : config
+          ? config.capacity
+          : schedule.capacity_data?.capacity || 0;
+      const bookingCount = isClassClosed
+        ? 0
+        : seatsBySchedule.get(schedule.id) || 0;
+      const availableSeats = Math.max(0, maxCapacity - bookingCount);
 
       availableSchedules.push({
         id: schedule.id,
@@ -422,12 +470,12 @@ const getAvailableSchedulesByBookingDate = async (
         gyms_id: schedule.gyms_id,
         capacity_data: {
           id: schedule.capacity_data?.id,
-          capacity: availability.maxCapacity,
+          capacity: maxCapacity,
         },
-        booking_count: availability.currentBookingCount,
-        available_seats: availability.availableSeats,
-        is_full: availability.availableSeats <= 0,
-        is_closed: availability.isClassClosed,
+        booking_count: bookingCount,
+        available_seats: availableSeats,
+        is_full: availableSeats <= 0,
+        is_closed: isClassClosed,
       });
     }
 

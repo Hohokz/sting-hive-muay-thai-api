@@ -7,11 +7,15 @@ const {
 } = require('../../models/Associations');
 const activityLogService = require('../../services/activityLogService');
 const cacheUtil = require('../../utils/cacheUtility');
-const { sumBookingSeats } = require('../../utils/bookingSeats');
+const { sumBookingSeatsBySchedule } = require('../../utils/bookingSeats');
 
 // Mock Models
 // Seat totals (COALESCE(private_trainers, capacity)) — see utils/bookingSeats
-jest.mock('../../utils/bookingSeats', () => ({ sumBookingSeats: jest.fn(), bookingSeats: jest.fn() }));
+jest.mock('../../utils/bookingSeats', () => ({
+  sumBookingSeats: jest.fn(),
+  sumBookingSeatsBySchedule: jest.fn(),
+  bookingSeats: jest.fn(),
+}));
 
 jest.mock('../../models/Associations', () => ({
   Gyms: { count: jest.fn() },
@@ -116,14 +120,10 @@ describe('ClassesScheduleService', () => {
       };
       
       ClassesSchedule.findAll.mockResolvedValue([mockSchedule]);
-      // getScheduleRealtimeAvailability (called internally per schedule) looks
-      // the schedule back up by PK and reads capacity from ClassesCapacity —
-      // it deliberately doesn't reuse mockSchedule.capacity_data (see the
-      // "avoid locking issues on a null table" comment in the service).
-      ClassesSchedule.findByPk.mockResolvedValue(mockSchedule);
-      ClassesBookingInAdvance.findOne.mockResolvedValue(null); // No gym closure or advance config
-      ClassesCapacity.findOne.mockResolvedValue({ capacity: 10 });
-      sumBookingSeats.mockResolvedValue(0); // No bookings yet
+      // Availability is computed in batch: no gym closure, no advance config,
+      // no bookings yet — so the standard capacity_data applies.
+      ClassesBookingInAdvance.findAll.mockResolvedValue([]);
+      sumBookingSeatsBySchedule.mockResolvedValue(new Map());
 
       const result = await classesScheduleService.getAvailableSchedulesByBookingDate('2024-03-05', 'STING_CLUB');
 
