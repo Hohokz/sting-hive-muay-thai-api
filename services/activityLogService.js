@@ -147,7 +147,7 @@ const getActivityLogs = async (filters = {}) => {
   }
 };
 
-const ExcelJS = require("exceljs");
+const { buildXlsxBuffer } = require("../utils/xlsxBuffer");
 
 const LOG_EXPORT_FIELDS = [
   { label: "ID", value: "id" },
@@ -260,13 +260,11 @@ const exportLogsToExcel = async ({ start_date, end_date }, performedByUser = nul
   try {
     const data = await _fetchLogsForExport(start_date, end_date);
 
-    const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet("Activity Logs");
-    sheet.columns = LOG_EXPORT_FIELDS.map((f) => ({ header: f.label, key: f.value, width: 20 }));
-    sheet.getRow(1).font = { bold: true };
-    sheet.addRows(data);
-
-    const buffer = await workbook.xlsx.writeBuffer();
+    const buffer = await buildXlsxBuffer({
+      sheetName: "Activity Logs",
+      columns: LOG_EXPORT_FIELDS.map((f) => ({ header: f.label, key: f.value, width: 20 })),
+      rows: data,
+    });
     const filename = `activity_logs_${dayjs(start_date).format("YYYYMMDD")}_${dayjs(end_date).format("YYYYMMDD")}.xlsx`;
 
     await _logLogsExported(start_date, end_date, performedByUser);

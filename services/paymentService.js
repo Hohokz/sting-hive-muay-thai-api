@@ -1,7 +1,7 @@
 const { sequelize } = require("../config/db");
 const { PaymentMethod } = require("../models/Associations");
 const activityLogService = require("./activityLogService");
-const { GYM_ENUM } = require("../models/Enums");
+const { GYM_ENUM, BOOKING_STATUS } = require("../models/Enums");
 const ExcelJS = require("exceljs");
 
 const dayjs = require("dayjs");
@@ -20,6 +20,12 @@ const GYM_TZ = "Asia/Bangkok";
 // admin-account-level actions with no dedicated category (e.g. PURGE_LOGS_MONTH
 // in activityLogService.js).
 const LOG_SERVICE = "USER";
+
+// "Deleting" a booking from the dashboard only cancels it, and its
+// booking_payments rows stay behind — so every sales query must skip
+// bookings that no longer happened, or a removed booking keeps showing up
+// in the totals and the class drill-down.
+const EXCLUDED_BOOKING_STATUSES = [BOOKING_STATUS.CANCELED, BOOKING_STATUS.FAILED];
 
 const MONTH_FORMAT = /^\d{4}-\d{2}$/;
 const DAY_FORMAT = /^\d{4}-\d{2}-\d{2}$/;
@@ -219,10 +225,18 @@ const getPaymentSummary = async ({ period, value, gym } = {}) => {
     LEFT JOIN payment_methods pm ON pm.id = bp.payment_method_id
     WHERE cb.date_booking >= :start AND cb.date_booking < :end
       AND (:gym::text IS NULL OR cs.gym_enum = :gym)
+      AND cb.booking_status NOT IN (:excludedStatuses)
     GROUP BY pm.id, pm.name
     ORDER BY pm.name ASC NULLS LAST;
     `,
-    { replacements: { start, end, gym: gym || null } },
+    {
+      replacements: {
+        start,
+        end,
+        gym: gym || null,
+        excludedStatuses: EXCLUDED_BOOKING_STATUSES,
+      },
+    },
   );
 
   const [classRows] = await sequelize.query(
@@ -242,10 +256,18 @@ const getPaymentSummary = async ({ period, value, gym } = {}) => {
     JOIN classes_schedule cs ON cs.id = cb.classes_schedule_id
     WHERE cb.date_booking >= :start AND cb.date_booking < :end
       AND (:gym::text IS NULL OR cs.gym_enum = :gym)
+      AND cb.booking_status NOT IN (:excludedStatuses)
     GROUP BY cs.id, cs.gym_enum, cs.start_time, cs.end_time, cs.is_private_class
     ORDER BY cs.gym_enum ASC, cs.start_time ASC;
     `,
-    { replacements: { start, end, gym: gym || null } },
+    {
+      replacements: {
+        start,
+        end,
+        gym: gym || null,
+        excludedStatuses: EXCLUDED_BOOKING_STATUSES,
+      },
+    },
   );
 
   const byMethod = methodRows.map((r) => ({
@@ -321,10 +343,19 @@ const _fetchPaymentDetailsForExport = async (start, end, gym, scheduleId) => {
     LEFT JOIN payment_methods pm ON pm.id = bp.payment_method_id
     WHERE cb.date_booking >= :start AND cb.date_booking < :end
       AND (:gym::text IS NULL OR cs.gym_enum = :gym)
+      AND cb.booking_status NOT IN (:excludedStatuses)
       AND (:scheduleId::uuid IS NULL OR cs.id = :scheduleId)
     ORDER BY cb.date_booking ASC, bp.created_date ASC;
     `,
-    { replacements: { start, end, gym: gym || null, scheduleId: scheduleId || null } },
+    {
+      replacements: {
+        start,
+        end,
+        gym: gym || null,
+        scheduleId: scheduleId || null,
+        excludedStatuses: EXCLUDED_BOOKING_STATUSES,
+      },
+    },
   );
 
   return rows.map((r) => ({

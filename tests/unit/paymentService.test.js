@@ -71,4 +71,30 @@ describe('PaymentService', () => {
       expect(sequelize.query).not.toHaveBeenCalled();
     });
   });
+
+  describe('canceled bookings are not sales', () => {
+    // Every query must filter booking status in SQL and pass the excluded list
+    const expectEveryQueryExcludesCanceled = () => {
+      expect(sequelize.query).toHaveBeenCalled();
+      for (const [sql, { replacements }] of sequelize.query.mock.calls) {
+        expect(sql).toMatch(/cb\.booking_status NOT IN \(:excludedStatuses\)/);
+        expect(replacements.excludedStatuses).toEqual(['CANCELED', 'FAILED']);
+      }
+    };
+
+    test('summary by method and by class', async () => {
+      await paymentService.getPaymentSummary({ period: 'day', value: '2026-11-11' });
+      expect(sequelize.query).toHaveBeenCalledTimes(2);
+      expectEveryQueryExcludesCanceled();
+    });
+
+    test('class drill-down', async () => {
+      await paymentService.getClassPaymentDetails({
+        period: 'day',
+        value: '2026-11-11',
+        scheduleId: '00000000-0000-0000-0000-000000000001'
+      });
+      expectEveryQueryExcludesCanceled();
+    });
+  });
 });

@@ -1130,7 +1130,7 @@ const getBookingByName = async (name) => {
 };
 
 const { Parser } = require("json2csv");
-const ExcelJS = require("exceljs");
+const { buildXlsxBuffer } = require("../utils/xlsxBuffer");
 
 const BOOKING_EXPORT_FIELDS = [
   { label: "Date Booking", value: "date_booking" },
@@ -1286,13 +1286,11 @@ const exportBookingsToExcel = async ({ start_date, end_date }, performedByUser =
   try {
     const data = await _fetchBookingsForExport(start_date, end_date);
 
-    const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet("Bookings");
-    sheet.columns = BOOKING_EXPORT_FIELDS.map((f) => ({ header: f.label, key: f.value, width: 18 }));
-    sheet.getRow(1).font = { bold: true };
-    sheet.addRows(data);
-
-    const buffer = await workbook.xlsx.writeBuffer();
+    const buffer = await buildXlsxBuffer({
+      sheetName: "Bookings",
+      columns: BOOKING_EXPORT_FIELDS.map((f) => ({ header: f.label, key: f.value, width: 18 })),
+      rows: data,
+    });
     const filename = `bookings_${dayjs(start_date).format("YYYYMMDD")}_${dayjs(end_date).format("YYYYMMDD")}.xlsx`;
 
     await _logBookingsExported(start_date, end_date, performedByUser);
